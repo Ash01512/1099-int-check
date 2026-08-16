@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Did your return miss a 1099-INT?</title>
+<meta name="description" content="If you filed an extension, the IRS record of every 1099-INT filed under your SSN is complete enough to check against, and you still haven't filed. That overlap ends October 15.">
+
+<!-- ===================================================================
+     CONFIGURE THIS BEFORE DEPLOYING  (one line)
+
+     Replace the empty string below with your form endpoint. Any service
+     that accepts a POST of form fields works. Common ones:
+
+       Formspree  https://formspree.io/f/xxxxxxxx
+       Basin      https://usebasin.com/f/xxxxxxxx
+       Formsubmit https://formsubmit.co/your@email.com
+
+     If you leave this empty the page shows a visible red warning instead
+     of silently accepting and discarding addresses. That is deliberate.
+     =================================================================== -->
+<script>
+  window.FORM_ENDPOINT = "https://formspree.io/f/xxxxxxxx";
+  window.DEADLINE = "2026-10-15T23:59:59-04:00"; // extension deadline, TY2025
+</script>
+
+<style>
+  :root{
+    --paper:#FAFAF8; --ink:#111111; --mute:#6B6B66;
+    --rule:#D8D8D2; --signal:#C77400; --miss:#A8452F; --ok:#1F6B4A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:"JetBrains Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:0 40px}
+  .rule{border:0;border-top:1px solid var(--rule);margin:0}
+
+  header{padding:22px 0;display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+  header b{color:var(--ink);font-weight:600;letter-spacing:.04em}
+  header .cd{color:var(--signal);font-weight:600}
+
+  .hero{padding:56px 0 34px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);margin-bottom:20px}
+  h1{font-size:38px;line-height:1.22;font-weight:700;letter-spacing:-.025em;max-width:22ch}
+  h1 span{color:var(--miss)}
+  .lede{margin-top:22px;font-size:16px;line-height:1.6;max-width:64ch;color:#3D3A36}
+
+  .artifact{margin:14px 0 0;border:1px solid var(--ink);background:#fff;overflow-x:auto}
+  .artifact .bar{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:11px 20px;border-bottom:1px solid var(--ink);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+  .stamp{color:var(--miss);border:1px solid var(--miss);padding:3px 9px;font-weight:700;letter-spacing:.1em;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;min-width:600px}
+  thead th{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute);font-weight:600;text-align:left;padding:14px 20px 11px;border-bottom:1px solid var(--rule)}
+  th.r,td.r{text-align:right}
+  tbody td{padding:11px 20px;border-bottom:1px solid var(--rule);font-size:14.5px}
+  tbody tr.miss{background:#FDF6F4}
+  tbody tr.miss td{color:var(--miss);font-weight:700}
+  td.tag{width:150px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);font-weight:500}
+  tbody tr.miss td.tag{color:var(--miss);font-weight:700}
+  tfoot td{padding:14px 20px;font-weight:700;font-size:14.5px;border-top:1px solid var(--ink)}
+  .readout{padding:16px 20px;border-top:1px solid var(--rule);font-size:14px;color:#3D3A36;line-height:1.6}
+  .readout b{color:var(--miss)}
+
+  .disc{padding:30px 0;color:var(--mute);font-size:13px;line-height:1.65;max-width:68ch}
+  .disc b{color:var(--ink);font-weight:700}
+
+  .why{padding:38px 0}
+  .why h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:500;margin-bottom:22px}
+  .facts{width:100%;border-collapse:collapse}
+  .facts td{padding:16px 0;vertical-align:top;border-top:1px solid var(--rule)}
+  .facts tr:first-child td{border-top:0}
+  .facts td.n{width:44px;color:var(--signal);font-weight:700}
+  .facts td.t b{display:block;font-weight:600;margin-bottom:4px}
+  .facts td.t span{color:var(--mute);font-size:13.5px}
+
+  .cta{padding:40px 0 18px}
+  .cta h2{font-size:21px;font-weight:600;margin-bottom:9px;letter-spacing:-.01em}
+  .cta p{color:var(--mute);font-size:14px;margin-bottom:22px;max-width:60ch}
+  form{display:flex;max-width:520px}
+  input[type=email]{flex:1;font:inherit;font-size:15px;padding:14px 16px;border:1px solid var(--ink);border-right:0;background:#fff;border-radius:0;min-width:0}
+  input[type=email]::placeholder{color:#A5A59F}
+  button{font:inherit;font-size:15px;font-weight:600;padding:14px 26px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);border-radius:0;cursor:pointer;white-space:nowrap}
+  button[disabled]{opacity:.55;cursor:default}
+  .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+  .msg{margin-top:14px;font-size:13.5px;line-height:1.6;max-width:60ch;display:none}
+  .msg.show{display:block}
+  .msg.ok{color:var(--ok);font-weight:600}
+  .msg.err{color:var(--miss);font-weight:600}
+  .banner{
+    display:none;margin:0 0 18px;border:1px solid var(--miss);background:#FDF6F4;
+    color:var(--miss);padding:12px 16px;font-size:13px;font-weight:700;line-height:1.5;max-width:60ch;
+  }
+  .banner.show{display:block}
+  .banner span{display:block;font-weight:500;margin-top:5px}
+
+  .note{margin-top:13px;font-size:12px;color:var(--mute);max-width:60ch}
+  a{color:var(--signal);text-decoration:none;border-bottom:1px solid var(--signal)}
+  footer{padding:24px 0 56px;font-size:12px;color:var(--mute);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+  @media (max-width:640px){
+    .wrap{padding:0 22px}
+    h1{font-size:29px}
+    header{font-size:11px}
+    form{flex-direction:column;gap:10px}
+    input[type=email]{border-right:1px solid var(--ink)}
+    footer{flex-direction:column;gap:6px}
+  }
+</style>
+</head>
+<body>
+
+<hr class="rule">
+<div class="wrap">
+  <header>
+    <b>1099-INT Check</b>
+    <span>Tax year 2025 &nbsp;/&nbsp; <span class="cd" id="countdown">&mdash;</span></span>
+  </header>
+</div>
+<hr class="rule">
+
+<div class="wrap">
+  <section class="hero">
+    <div class="kicker">If you filed an extension</div>
+    <h1>Your transcript lists <span>three payers</span> your return does not.</h1>
+    <p class="lede">
+      The IRS record of every 1099-INT filed under your SSN is finally complete enough to
+      check against, and your return isn't in yet. Both are only true until October 15.
+    </p>
+  </section>
+
+  <div class="artifact">
+    <div class="bar">
+      <span>IRS Wage &amp; Income Transcript &mdash; interest income</span>
+      <span class="stamp">Example &mdash; not your data</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Payer</th><th></th><th class="r">Box 1 per IRS</th><th class="r">Your figure</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Ally Bank</td><td class="tag">matched</td><td class="r">$412.88</td><td class="r">$412.88</td></tr>
+        <tr><td>Marcus by Goldman Sachs</td><td class="tag">matched</td><td class="r">$1,206.14</td><td class="r">$1,206.14</td></tr>
+        <tr><td>Discover Bank</td><td class="tag">matched</td><td class="r">$338.02</td><td class="r">$338.02</td></tr>
+        <tr class="miss"><td>SoFi Bank, N.A.</td><td class="tag">not on return</td><td class="r">$247.51</td><td class="r">&mdash;</td></tr>
+        <tr class="miss"><td>Varo Bank</td><td class="tag">not on return</td><td class="r">$96.30</td><td class="r">&mdash;</td></tr>
+        <tr class="miss"><td>Live Oak Banking Co.</td><td class="tag">not on return</td><td class="r">$1,481.77</td><td class="r">&mdash;</td></tr>
+        <tr><td>Capital One, N.A.</td><td class="tag">matched</td><td class="r">$724.55</td><td class="r">$724.55</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="2">Interest reported to the IRS</td><td class="r">$4,507.17</td><td class="r">$2,681.59</td></tr>
+      </tfoot>
+    </table>
+    <p class="readout">
+      Three payers appear on the transcript and not in these figures, totalling
+      <b>$1,825.58</b>. At a 24% marginal rate that is roughly <b>$438</b> in tax, before
+      interest and penalty.
+    </p>
+  </div>
+</div>
+
+<hr class="rule" style="margin-top:44px">
+
+<div class="wrap">
+  <section class="why">
+    <h2>Why this window exists</h2>
+    <table class="facts">
+      <tr><td class="n">01</td><td class="t"><b>In February the data wasn't there yet.</b><span>Payers file 1099-INTs with the IRS as late as March 31, and corrections take another four to six weeks. Nothing filed during tax season could have been checked against a complete record.</span></td></tr>
+      <tr><td class="n">02</td><td class="t"><b>By August it mostly is.</b><span>Your Wage &amp; Income Transcript lists the interest payers who reported under your SSN. Free, and you pull it yourself.</span></td></tr>
+      <tr><td class="n">03</td><td class="t"><b>You haven't filed, so nothing needs amending.</b><span>Find a missed payer now and you just add it. Find it after filing and it's a 1040-X, or a CP2000 notice twelve to eighteen months later with interest attached.</span></td></tr>
+    </table>
+  </section>
+</div>
+
+<hr class="rule">
+
+<div class="wrap">
+  <p class="disc">
+    <b>What this will not tell you.</b> Nobody can certify that you have every form. The IRS
+    does not treat the current processing year as final, and a payer who never filed will
+    never appear. This only ever tells you one thing: <b>here are the payers the transcript
+    shows that your own figures do not.</b> A clean comparison is not a guarantee.
+  </p>
+</div>
+
+<hr class="rule">
+
+<div class="wrap">
+  <section class="cta">
+    <h2>Send me the walkthrough</h2>
+    <p>Free, plain text, no account. How to pull the transcript, read the interest section, and run this comparison on your own numbers in about twenty minutes.</p>
+
+    <div class="banner" id="banner">
+      Form endpoint is still a placeholder &mdash; this page is not collecting anything.
+      <span>Replace the <code>xxxxxxxx</code> in <code>window.FORM_ENDPOINT</code> with your real
+      Formspree form ID, then redeploy. Until then the input stays disabled on purpose, so no
+      address is ever accepted and dropped.</span>
+    </div>
+
+    <form id="signup" novalidate>
+      <label class="hp" for="company">Company (leave blank)</label>
+      <input class="hp" type="text" id="company" name="company" tabindex="-1" autocomplete="off">
+      <input type="email" id="email" name="email" placeholder="you@example.com" aria-label="Email address" required autocomplete="email">
+      <button type="submit" id="submit">Send it</button>
+    </form>
+
+    <p class="msg" id="msg" role="status" aria-live="polite"></p>
+
+    <p class="note">
+      No bank logins. No credentials. Nothing uploaded. You pull your own transcript from
+      <a href="https://www.irs.gov/individuals/get-transcript" rel="noopener">irs.gov</a> and keep it.
+      The only thing this page stores is the address you type here.
+    </p>
+  </section>
+</div>
+
+<hr class="rule">
+<div class="wrap">
+  <footer><span>Not a tax preparer. Not tax advice.</span><span>Built by someone with too many savings accounts.</span></footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- live countdown -------------------------------------------------
+  // Hardcoding "60 days" would be wrong tomorrow, on a page whose whole
+  // argument is a deadline. Compute it, and degrade honestly once passed.
+  var el = document.getElementById("countdown");
+  var deadline = new Date(window.DEADLINE);
+  function renderCountdown(){
+    if (isNaN(deadline.getTime())) { el.textContent = "Deadline Oct 15"; return; }
+    var now = new Date();
+    if (now > deadline) { el.textContent = "Oct 15 has passed"; return; }
+    // Count whole calendar days, not elapsed milliseconds. Math.ceil on a raw
+    // ms difference reads one day high for all but an instant of each day.
+    var a = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    var b = Date.UTC(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+    var days = Math.round((b - a) / 86400000);
+    if (days > 1)        el.textContent = days + " days to Oct 15";
+    else if (days === 1) el.textContent = "1 day to Oct 15";
+    else                 el.textContent = "Due today";
+  }
+  renderCountdown();
+  setInterval(renderCountdown, 60000);
+
+  // ---- signup ---------------------------------------------------------
+  var form   = document.getElementById("signup");
+  var input  = document.getElementById("email");
+  var button = document.getElementById("submit");
+  var msg    = document.getElementById("msg");
+  var banner = document.getElementById("banner");
+  var honey  = document.getElementById("company");
+  var endpoint = (window.FORM_ENDPOINT || "").trim();
+
+  // Treat obvious placeholders as unconfigured. "https://formspree.io/f/xxxxxxxx"
+  // is not a form ID; posting to it 404s and every address is lost silently,
+  // which is worse than an empty endpoint because the page looks live.
+  var isPlaceholder = /x{4,}|xxxxxxxx|your-?form|yourid|FORM_?ID|example\.(com|invalid)|replace_?me/i.test(endpoint);
+
+  // Fail loudly, never silently. An unconfigured page that looks like it
+  // works is worse than one that admits it doesn't.
+  if (!endpoint || isPlaceholder) {
+    banner.classList.add("show");
+    button.disabled = true;
+    input.disabled = true;
+    endpoint = "";
+  }
+
+  function say(text, kind){
+    msg.textContent = text;
+    msg.className = "msg show " + kind;
+  }
+
+  form.addEventListener("submit", function(e){
+    e.preventDefault();
+    if (!endpoint) return;
+    if (honey.value) return;                 // bot filled the hidden field
+
+    var value = input.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) {
+      say("That doesn't look like an email address.", "err");
+      input.focus();
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Sending";
+    msg.className = "msg";
+
+    var body = new FormData();
+    body.append("email", value);
+    // Where did they come from? Lets you tell r/churning apart from DoC.
+    body.append("source", new URLSearchParams(location.search).get("src") || "direct");
+    body.append("page", "guide-landing");
+
+    fetch(endpoint, { method:"POST", body: body, headers:{ "Accept":"application/json" } })
+      .then(function(res){
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        form.style.display = "none";
+        say("Sent. Check your inbox in a minute, and your spam folder after that.", "ok");
+      })
+      .catch(function(){
+        button.disabled = false;
+        button.textContent = "Send it";
+        say("That didn't go through. Try again, or email me directly.", "err");
+      });
+  });
+})();
+</script>
+
+</body>
+</html>

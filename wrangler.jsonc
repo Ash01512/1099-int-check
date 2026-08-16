@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "1099-int-check",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-17",
+
+  // Static assets are served by the runtime; the Worker in src/index.js
+  // wraps them to attach security headers.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
