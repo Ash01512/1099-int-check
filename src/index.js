@@ -12,8 +12,8 @@
 
 // Inline <style> and <script> in the page require 'unsafe-inline' on those
 // two directives. Everything else is shut: no external scripts, no framing,
-// and connect-src is 'self' only, since the browser now talks to this
-// Worker rather than to a third-party form provider.
+// and connect-src is 'self' only, since the browser talks to this Worker
+// rather than to a third-party form provider.
 const CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -57,11 +57,54 @@ function clamp(value, max) {
   return trimmed.slice(0, max);
 }
 
+function isConfigured(env) {
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY);
+}
+
+/**
+ * Reject cross-site POSTs.
+ *
+ * The endpoint is only ever called by our own page via fetch, so a request
+ * carrying someone else's Origin is either a misconfiguration or an attempt
+ * to drive our database from another site. Requests with no Origin at all
+ * (curl, server-to-server) are allowed through, because blocking them buys
+ * nothing — an attacker can always omit the header — while breaking
+ * legitimate scripted testing.
+ */
+function originAllowed(request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === new URL(request.url).host;
+  } catch {
+    return false;
+  }
+}
+
 async function handleSignup(request, env) {
-  if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
-    // Same principle as the page's placeholder guard: refuse loudly rather
-    // than accept an address and drop it on the floor.
+  if (!isConfigured(env)) {
+    // Same principle as the page's guard: refuse loudly rather than accept
+    // an address and drop it on the floor.
     return json({ error: "not_configured" }, 503);
+  }
+
+  if (!originAllowed(request)) {
+    return json({ error: "forbidden_origin" }, 403);
+  }
+
+  // Rate limit per client IP. Cloudflare's binding is optional so that local
+  // dev and a misconfigured deploy still function; when it is absent we log
+  // rather than silently pretending the endpoint is protected.
+  if (env.SIGNUP_LIMITER) {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    try {
+      const { success } = await env.SIGNUP_LIMITER.limit({ key: ip });
+      if (!success) return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+    } catch {
+      // A limiter failure must not take the form down.
+    }
+  } else {
+    console.warn("SIGNUP_LIMITER binding absent — /api/signup is unthrottled");
   }
 
   let payload;
@@ -77,13 +120,16 @@ async function handleSignup(request, env) {
   }
 
   // Honeypot. Bots fill every field they find; humans never see this one.
-  // Answer 200 so the bot has no signal that it was rejected.
-  if (clamp(payload.company, 200)) return json({ ok: true });
+  // Answer as if it succeeded so the bot gets no signal it was rejected.
+  if (clamp(payload.company, 200)) return json({ ok: true }, 201);
 
-  const email = clamp(payload.email, 254);
-  if (!email || !EMAIL_RE.test(email)) {
+  const raw = clamp(payload.email, 254);
+  if (!raw || !EMAIL_RE.test(raw)) {
     return json({ error: "invalid_email" }, 400);
   }
+  // Store one canonical form. The unique index is on lower(email), so mixed
+  // case would otherwise leave the stored value inconsistent with the key.
+  const email = raw.toLowerCase();
 
   const row = {
     email,
@@ -108,11 +154,11 @@ async function handleSignup(request, env) {
     return json({ error: "upstream_unreachable" }, 502);
   }
 
-  if (res.ok) return json({ ok: true }, 201);
-
-  // 23505 is the unique violation on lower(email). Already subscribed is a
-  // success from the reader's point of view, not an error to apologise for.
-  if (res.status === 409) return json({ ok: true, already: true });
+  // 23505 is the unique violation on lower(email). Answer it identically to a
+  // fresh signup: telling the caller "already on the list" would let anyone
+  // test whether a given address is subscribed, which is an enumeration leak
+  // on what is, for this audience, a sensitive list.
+  if (res.ok || res.status === 409) return json({ ok: true }, 201);
 
   // 23514 is the email-shape check constraint, i.e. input we should have
   // caught above. Report it as a client error rather than a server fault.
@@ -124,6 +170,12 @@ async function handleSignup(request, env) {
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
+
+    // Lets the page discover a broken backend on load, instead of only after
+    // a visitor has typed an address and pressed the button.
+    if (pathname === "/api/status") {
+      return json({ ok: true, configured: isConfigured(env) });
+    }
 
     if (pathname === "/api/signup") {
       if (request.method !== "POST") {

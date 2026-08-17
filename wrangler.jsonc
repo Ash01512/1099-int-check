@@ -31,6 +31,18 @@
     "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co"
   },
 
+  // Per-IP throttle on /api/signup. Without this the endpoint is an open
+  // write into the database: the honeypot stops naive bots, but nothing
+  // stopped a script from filling the table. 5 per minute is generous for
+  // a human and useless for a flood.
+  "ratelimits": [
+    {
+      "name": "SIGNUP_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ],
+
   "observability": {
     "enabled": true
   }

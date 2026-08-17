@@ -143,8 +143,19 @@ you can open directly in a browser.
 |---|---|
 | `GET /` | The landing page, with security headers attached. |
 | `POST /api/signup` | Validates and inserts into Supabase. JSON or form-encoded. |
+| `GET /api/status` | `{ok, configured}` — lets the page detect a broken backend on load. |
 | `GET /healthz` | `ok`, without touching the asset store. |
 | anything else | 404. |
+
+### Abuse controls on `/api/signup`
+
+| Control | Behaviour |
+|---|---|
+| Rate limit | 5 per minute per IP via the `SIGNUP_LIMITER` binding → `429`. If the binding is missing the Worker logs a warning rather than pretending to be protected. |
+| Origin check | A cross-site `Origin` is rejected `403`. A missing `Origin` (curl, server-to-server) is allowed, since blocking it buys nothing and breaks scripted testing. |
+| Honeypot | A filled hidden field is answered `201` and discarded, so bots get no signal. |
+| Enumeration | A duplicate address returns exactly the same `201 {"ok":true}` as a new one. A distinct "already subscribed" would let anyone test whether a given person is on the list. |
+| Normalisation | Addresses are lowercased before storage, matching the `lower(email)` unique index. |
 
 ### The Worker
 
