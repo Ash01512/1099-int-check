@@ -7,20 +7,16 @@
 <meta name="description" content="If you filed an extension, the IRS record of every 1099-INT filed under your SSN is complete enough to check against, and you still haven't filed. That overlap ends October 15.">
 
 <!-- ===================================================================
-     CONFIGURE THIS BEFORE DEPLOYING  (one line)
+     Signups post same-origin to /api/signup, which the Worker forwards
+     to Supabase. No database key is present in this page, and none is
+     needed here: the Worker holds it as a secret.
 
-     Replace the empty string below with your form endpoint. Any service
-     that accepts a POST of form fields works. Common ones:
-
-       Formspree  https://formspree.io/f/xxxxxxxx
-       Basin      https://usebasin.com/f/xxxxxxxx
-       Formsubmit https://formsubmit.co/your@email.com
-
-     If you leave this empty the page shows a visible red warning instead
-     of silently accepting and discarding addresses. That is deliberate.
+     If the Worker is missing its Supabase binding it answers 503, and
+     the page shows a visible warning rather than accepting an address
+     and discarding it. That is deliberate.
      =================================================================== -->
 <script>
-  window.FORM_ENDPOINT = "https://formspree.io/f/mljrpbvy";
+  window.SIGNUP_ENDPOINT = "/api/signup";
   window.DEADLINE = "2026-10-15T23:59:59-04:00"; // extension deadline, TY2025
 </script>
 
@@ -193,10 +189,10 @@
     <p>Free, plain text, no account. How to pull the transcript, read the interest section, and run this comparison on your own numbers in about twenty minutes.</p>
 
     <div class="banner" id="banner">
-      Form endpoint is still a placeholder &mdash; this page is not collecting anything.
-      <span>Replace the <code>xxxxxxxx</code> in <code>window.FORM_ENDPOINT</code> with your real
-      Formspree form ID, then redeploy. Until then the input stays disabled on purpose, so no
-      address is ever accepted and dropped.</span>
+      Signups aren't reaching the database &mdash; nothing is being collected right now.
+      <span>The Worker is missing its <code>SUPABASE_URL</code> or
+      <code>SUPABASE_PUBLISHABLE_KEY</code> binding. The input is disabled on purpose until
+      that is fixed, so no address is ever accepted and dropped.</span>
     </div>
 
     <form id="signup" novalidate>
@@ -209,9 +205,9 @@
     <p class="msg" id="msg" role="status" aria-live="polite"></p>
 
     <p class="note">
-      No bank logins. No credentials. Nothing uploaded. You pull your own transcript from
-      <a href="https://www.irs.gov/individuals/get-transcript" rel="noopener">irs.gov</a> and keep it.
-      The only thing this page stores is the address you type here.
+      No bank logins. No credentials. No documents uploaded. You pull your own transcript from
+      <a href="https://www.irs.gov/individuals/get-transcript" rel="noopener">irs.gov</a> and it
+      stays with you. The only thing stored is the address you type here.
     </p>
   </section>
 </div>
@@ -253,30 +249,30 @@
   var msg    = document.getElementById("msg");
   var banner = document.getElementById("banner");
   var honey  = document.getElementById("company");
-  var endpoint = (window.FORM_ENDPOINT || "").trim();
-
-  // Treat obvious placeholders as unconfigured. "https://formspree.io/f/xxxxxxxx"
-  // is not a form ID; posting to it 404s and every address is lost silently,
-  // which is worse than an empty endpoint because the page looks live.
-  var isPlaceholder = /x{4,}|xxxxxxxx|your-?form|yourid|FORM_?ID|example\.(com|invalid)|replace_?me/i.test(endpoint);
-
-  // Fail loudly, never silently. An unconfigured page that looks like it
-  // works is worse than one that admits it doesn't.
-  if (!endpoint || isPlaceholder) {
-    banner.classList.add("show");
-    button.disabled = true;
-    input.disabled = true;
-    endpoint = "";
-  }
+  var endpoint = window.SIGNUP_ENDPOINT || "/api/signup";
 
   function say(text, kind){
     msg.textContent = text;
     msg.className = "msg show " + kind;
   }
 
+  function reset(){
+    button.disabled = false;
+    button.textContent = "Send it";
+  }
+
+  // Fail loudly, never silently. If the Worker has no Supabase binding it
+  // answers 503, and the page says so rather than pretending it worked.
+  function unconfigured(){
+    banner.classList.add("show");
+    input.disabled = true;
+    button.disabled = true;
+    button.textContent = "Send it";
+    msg.className = "msg";
+  }
+
   form.addEventListener("submit", function(e){
     e.preventDefault();
-    if (!endpoint) return;
     if (honey.value) return;                 // bot filled the hidden field
 
     var value = input.value.trim();
@@ -298,14 +294,33 @@
 
     fetch(endpoint, { method:"POST", body: body, headers:{ "Accept":"application/json" } })
       .then(function(res){
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        form.style.display = "none";
-        say("Sent. Check your inbox in a minute, and your spam folder after that.", "ok");
+        return res.json().catch(function(){ return {}; })
+          .then(function(data){ return { status: res.status, data: data }; });
+      })
+      .then(function(r){
+        if (r.status === 503 || (r.data && r.data.error === "not_configured")) {
+          unconfigured();
+          return;
+        }
+        if (r.data && r.data.error === "invalid_email") {
+          reset();
+          say("That doesn't look like an email address.", "err");
+          input.focus();
+          return;
+        }
+        if (r.data && r.data.ok) {
+          form.style.display = "none";
+          say(r.data.already
+            ? "You're already on the list. Nothing more to do."
+            : "You're on the list. The walkthrough is on its way.", "ok");
+          return;
+        }
+        reset();
+        say("That didn't go through. Try again in a moment.", "err");
       })
       .catch(function(){
-        button.disabled = false;
-        button.textContent = "Send it";
-        say("That didn't go through. Try again, or email me directly.", "err");
+        reset();
+        say("That didn't go through. Check your connection and try again.", "err");
       });
   });
 })();

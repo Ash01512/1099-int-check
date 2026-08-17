@@ -5,11 +5,30 @@
   "compatibility_date": "2026-08-17",
 
   // Static assets are served by the runtime; the Worker in src/index.js
-  // wraps them to attach security headers.
+  // wraps them to attach security headers and handles POST /api/signup.
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    // This is a one-page site, not an SPA. With single-page-application
+    // every unknown path returned the landing page with a 200, so
+    // crawlers would see unlimited duplicate URLs. "none" lets unknown
+    // paths 404 honestly.
+    "not_found_handling": "none",
+
+    // Without this, matching assets are served straight from the asset
+    // store and the Worker never runs — which silently drops every
+    // security header on the page itself. Verified: with this false,
+    // GET / returns no CSP at all.
+    "run_worker_first": true
+  },
+
+  // The project URL is not a secret; it ships in every Supabase client.
+  // SUPABASE_PUBLISHABLE_KEY is set as a secret instead, so a public repo
+  // does not hand strangers a way to POST straight into the table and
+  // bypass this Worker's validation and honeypot:
+  //   npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+  "vars": {
+    "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co"
   },
 
   "observability": {

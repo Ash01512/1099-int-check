@@ -39,47 +39,72 @@ The sample table in the hero is marked `EXAMPLE — NOT YOUR DATA` directly in t
 table header, not in a footnote. Illustrative figures on a tax page read as a
 fabricated screenshot if the disclaimer is easy to miss.
 
-## Form
+## Signups
 
-`window.FORM_ENDPOINT` in `public/index.html` points at a live Formspree form.
-Submissions go directly from the reader's browser to Formspree; this Worker
-never sees one.
+The page posts same-origin to `/api/signup`. The Worker validates, then inserts
+into Supabase. No database key is ever sent to the browser.
 
-Formspree holds the very first submission until the form is confirmed by email,
-so send yourself a test before any real traffic arrives.
+Routing it through the Worker rather than posting to Supabase directly means the
+email check, the honeypot, and the field-length limits cannot be bypassed by
+POSTing straight at the database.
 
-### Free-tier limits worth watching
+### The table
 
-- **50 submissions per month.** Past the cap they are rejected, not queued.
-- **30 days of submission history.** The collection window runs to October 15,
-  which is longer than 30 days, so addresses gathered early can age out of the
-  dashboard before the window closes. Export to CSV regularly, or move to a
-  paid tier.
+`public.signups` — email, source, page, user_agent, created_at.
 
-### Changing the endpoint
+- `unique index on lower(email)` so a repeat signup is a no-op rather than a
+  duplicate row. The Worker turns the resulting 409 into "you're already on the
+  list", which is a success from the reader's point of view.
+- A check constraint rejects malformed addresses at the database, not only in
+  the browser.
 
-Replace the value and redeploy with `npm run deploy`. Any provider that accepts
-a POST of form fields works; the Worker's CSP already allows Formspree, Basin,
-and Formsubmit.
+### Write-only from the internet
 
-The guard treats anything matching a placeholder pattern (`xxxx`, `your-form`,
-`example.com`, `REPLACE_ME`) as unconfigured — it disables the input and shows a
-visible warning rather than accepting addresses and dropping them. A form that
-silently discards submissions is worse than one that admits it is not wired up,
-because the silence reads as "nobody was interested" when in fact nobody was
-recorded.
+RLS is on, `anon` is granted `INSERT` and nothing else, and there is no `SELECT`
+policy. A leaked publishable key lets someone add a row; it does not let them
+read the list. Verified:
+
+```
+INSERT as anon   201
+SELECT as anon   401  permission denied for table signups
+duplicate        409  unique violation
+malformed email  400  check constraint violation
+```
+
+Read the collected addresses in the Supabase dashboard, or over a service-role
+connection. Never from the browser.
+
+### Configuration
+
+| Name | Where | Why |
+|---|---|---|
+| `SUPABASE_URL` | `vars` in `wrangler.jsonc` | Not a secret; ships in every Supabase client. |
+| `SUPABASE_PUBLISHABLE_KEY` | Worker secret | Kept out of a public repo so strangers cannot POST straight into the table. |
+
+```bash
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+```
+
+If either binding is missing the Worker answers `503 not_configured` and the page
+disables the input and shows a visible warning. That is deliberate: a form that
+accepts an address and drops it is worse than one that admits it is not wired up,
+because the silence reads as "nobody was interested" when nobody was recorded.
 
 ## Local development
 
 ```bash
 npm install
-npm run dev          # http://localhost:8787
+cp .dev.vars.example .dev.vars   # then paste your publishable key
+npm run dev                      # http://localhost:8787
 ```
+
+`.dev.vars` is gitignored.
 
 ## Deploy
 
 ```bash
-npx wrangler login   # one-time browser OAuth
+npx wrangler login                            # one-time browser OAuth
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
 npm run deploy
 ```
 
@@ -104,7 +129,7 @@ Anything without a `src` parameter is recorded as `direct`.
 ├── public/
 │   └── index.html      the entire page: markup, styles, and script inline
 ├── src/
-│   └── index.js        Worker wrapping the assets with security headers
+│   └── index.js        Worker: security headers + POST /api/signup
 ├── wrangler.jsonc      Worker + static assets config
 └── package.json
 ```
@@ -112,12 +137,31 @@ Anything without a `src` parameter is recorded as `direct`.
 `public/index.html` has no build step and no dependencies. It is a single file
 you can open directly in a browser.
 
+### Routes
+
+| Route | Behaviour |
+|---|---|
+| `GET /` | The landing page, with security headers attached. |
+| `POST /api/signup` | Validates and inserts into Supabase. JSON or form-encoded. |
+| `GET /healthz` | `ok`, without touching the asset store. |
+| anything else | 404. |
+
 ### The Worker
 
-An assets-only Worker cannot set response headers, which is the only reason
-`src/index.js` exists. It adds a strict CSP (`default-src 'none'`, outbound
-connections limited to the form providers), `nosniff`, `frame-ancestors 'none'`,
-HSTS, and a restrictive `Permissions-Policy`. It also answers `/healthz`.
+An assets-only Worker cannot set response headers or run server-side logic,
+which is why `src/index.js` exists. It adds a strict CSP (`default-src 'none'`,
+`connect-src 'self'`), `nosniff`, `frame-ancestors 'none'`, HSTS, and a
+restrictive `Permissions-Policy`.
+
+**`run_worker_first` is required and not optional.** Without it, matching assets
+are served straight from the asset store and the Worker never runs, so the page
+silently returns with no security headers at all while the API route keeps
+them — an easy thing to ship without noticing. Verified by inspecting response
+headers on `GET /` both ways.
+
+`not_found_handling` is `none`, not `single-page-application`. This is a one-page
+site; with the SPA setting every unknown path returned the landing page with a
+200, so crawlers would see unlimited duplicate URLs.
 
 Inline `<style>` and `<script>` require `'unsafe-inline'` on those two
 directives. That is a real weakening of the CSP, accepted here because the page
@@ -128,11 +172,18 @@ its own file and switching to a hash or nonce would close it.
 
 - No bank logins and no credentials are ever requested.
 - No documents are uploaded. Readers pull their own transcript from IRS.gov and
-  keep it.
-- The only data leaving the browser is the email address typed into the form,
-  posted directly from the reader's browser to the form provider. The Worker
-  never sees a submission and stores nothing at the edge.
-- A hidden honeypot field catches bots; a filled honeypot is dropped silently.
+  keep it. No transcript, and no tax figure, ever reaches this system.
+- The only data collected is the email address typed into the form, plus the
+  `?src=` value from the link, the page name, and the browser's user-agent
+  string. It is stored in a Supabase Postgres database **you control**, not
+  with a third-party form provider.
+- Because that data lives in your project, you are its custodian. Storing an
+  email address is a much smaller obligation than storing tax documents, but it
+  is not nothing — decide your retention period and honour deletion requests.
+- The collected list is not readable through the public API. See
+  [Write-only from the internet](#write-only-from-the-internet).
+- A hidden honeypot field catches bots; a filled honeypot is answered `200` and
+  silently discarded, so the bot gets no signal that it was rejected.
 
 ## Countdown
 
