@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Did your return miss a 1099-INT?</title>
 <meta name="description" content="If you filed an extension, the IRS record of every 1099-INT filed under your SSN is complete enough to check against, and you still haven't filed. That overlap ends October 15.">
+<meta name="color-scheme" content="light">
+
+<!-- Inline icon. Without a rel="icon" every browser requests /favicon.ico,
+     which now correctly 404s, putting a red line in the console of a page
+     whose whole job is to look trustworthy. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23FAFAF8'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='19' font-weight='700' fill='%23C77400' text-anchor='middle'%3E1099%3C/text%3E%3C/svg%3E">
 
 <!-- ===================================================================
      Signups post same-origin to /api/signup, which the Worker forwards
@@ -271,6 +277,15 @@
     msg.className = "msg";
   }
 
+  // Ask on load rather than waiting for a failed submit. Otherwise a visitor
+  // types their address, presses the button, and only then discovers the
+  // backend is down — which is exactly the silent-failure behaviour the
+  // banner exists to prevent, just moved one step later.
+  fetch("/api/status", { headers: { "Accept": "application/json" } })
+    .then(function(res){ return res.json(); })
+    .then(function(data){ if (data && data.configured === false) unconfigured(); })
+    .catch(function(){ /* offline or blocked: let the submit path report it */ });
+
   form.addEventListener("submit", function(e){
     e.preventDefault();
     if (honey.value) return;                 // bot filled the hidden field
@@ -308,11 +323,17 @@
           input.focus();
           return;
         }
+        if (r.status === 429) {
+          reset();
+          say("Too many attempts. Give it a minute and try again.", "err");
+          return;
+        }
         if (r.data && r.data.ok) {
+          // Deliberately identical whether or not the address was already
+          // stored. A distinct "already on the list" would let anyone test
+          // whether a given person is subscribed.
           form.style.display = "none";
-          say(r.data.already
-            ? "You're already on the list. Nothing more to do."
-            : "You're on the list. The walkthrough is on its way.", "ok");
+          say("You're on the list. The walkthrough is on its way.", "ok");
           return;
         }
         reset();
