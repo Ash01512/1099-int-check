@@ -62,6 +62,21 @@ function isConfigured(env) {
 }
 
 /**
+ * Salted SHA-256 of the client IP.
+ *
+ * The database rate limit needs to group requests by client, but storing raw
+ * addresses alongside email addresses is more personal data than this page has
+ * any reason to hold. A salted hash groups correctly and cannot be reversed to
+ * an address. The salt is per-deployment; rotating it resets the buckets,
+ * which is harmless for a 60-second window.
+ */
+async function hashIp(ip, salt) {
+  const data = new TextEncoder().encode(`${salt || "1099-int-check"}:${ip}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * Reject cross-site POSTs.
  *
  * The endpoint is only ever called by our own page via fetch, so a request
@@ -98,13 +113,26 @@ async function handleSignup(request, env) {
   if (env.SIGNUP_LIMITER) {
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
     try {
-      const { success } = await env.SIGNUP_LIMITER.limit({ key: ip });
-      if (!success) return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
-    } catch {
-      // A limiter failure must not take the form down.
+      const result = await env.SIGNUP_LIMITER.limit({ key: ip });
+      // A binding that resolves without a boolean `success` is not throttling
+      // anything. Say so, loudly: an empty catch here is how an endpoint ends
+      // up looking protected while being wide open.
+      if (!result || typeof result.success !== "boolean") {
+        console.error(
+          "SIGNUP_LIMITER returned no success flag — endpoint UNTHROTTLED:",
+          JSON.stringify(result)
+        );
+      } else if (!result.success) {
+        return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+      }
+    } catch (err) {
+      console.error(
+        "SIGNUP_LIMITER.limit() threw — endpoint UNTHROTTLED:",
+        (err && err.message) || String(err)
+      );
     }
   } else {
-    console.warn("SIGNUP_LIMITER binding absent — /api/signup is unthrottled");
+    console.error("SIGNUP_LIMITER binding absent — endpoint UNTHROTTLED");
   }
 
   let payload;
@@ -136,6 +164,10 @@ async function handleSignup(request, env) {
     source: clamp(payload.source, 64) || "direct",
     page: clamp(payload.page, 64) || "guide-landing",
     user_agent: clamp(request.headers.get("user-agent"), 512),
+    ip_hash: await hashIp(
+      request.headers.get("cf-connecting-ip") || "unknown",
+      env.IP_HASH_SALT
+    ),
   };
 
   let res;
@@ -159,6 +191,13 @@ async function handleSignup(request, env) {
   // test whether a given address is subscribed, which is an enumeration leak
   // on what is, for this audience, a sensitive list.
   if (res.ok || res.status === 409) return json({ ok: true }, 201);
+
+  // The database trigger raises PT429, which PostgREST surfaces as a real 429.
+  // This is the limit that actually holds; the Cloudflare binding above is a
+  // cheap first pass that its own docs describe as permissive.
+  if (res.status === 429) {
+    return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  }
 
   // 23514 is the email-shape check constraint, i.e. input we should have
   // caught above. Report it as a client error rather than a server fault.
