@@ -39,31 +39,35 @@ The sample table in the hero is marked `EXAMPLE — NOT YOUR DATA` directly in t
 table header, not in a footnote. Illustrative figures on a tax page read as a
 fabricated screenshot if the disclaimer is easy to miss.
 
-## Status: not collecting yet
+## Form
 
-`window.FORM_ENDPOINT` in `public/index.html` is still the placeholder
-`https://formspree.io/f/xxxxxxxx`.
+`window.FORM_ENDPOINT` in `public/index.html` points at a live Formspree form.
+Submissions go directly from the reader's browser to Formspree; this Worker
+never sees one.
 
-The page detects this and **disables the email input**, showing a visible warning
-instead. That is deliberate. A form that accepts addresses and drops them is
-worse than one that admits it is not wired up, because you would read the silence
-as "nobody was interested" when in fact nobody was recorded.
+Formspree holds the very first submission until the form is confirmed by email,
+so send yourself a test before any real traffic arrives.
 
-### To start collecting
+### Free-tier limits worth watching
 
-1. Create a form at [formspree.io](https://formspree.io) (or Basin, or Formsubmit)
-   and copy the form ID.
-2. In `public/index.html`, replace the placeholder:
+- **50 submissions per month.** Past the cap they are rejected, not queued.
+- **30 days of submission history.** The collection window runs to October 15,
+  which is longer than 30 days, so addresses gathered early can age out of the
+  dashboard before the window closes. Export to CSV regularly, or move to a
+  paid tier.
 
-   ```js
-   window.FORM_ENDPOINT = "https://formspree.io/f/YOUR_REAL_ID";
-   ```
+### Changing the endpoint
 
-3. Redeploy: `npm run deploy`
+Replace the value and redeploy with `npm run deploy`. Any provider that accepts
+a POST of form fields works; the Worker's CSP already allows Formspree, Basin,
+and Formsubmit.
 
 The guard treats anything matching a placeholder pattern (`xxxx`, `your-form`,
-`example.com`, `REPLACE_ME`) as unconfigured, so a half-finished edit fails loudly
-rather than silently.
+`example.com`, `REPLACE_ME`) as unconfigured — it disables the input and shows a
+visible warning rather than accepting addresses and dropping them. A form that
+silently discards submissions is worse than one that admits it is not wired up,
+because the silence reads as "nobody was interested" when in fact nobody was
+recorded.
 
 ## Local development
 
