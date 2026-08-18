@@ -28,7 +28,22 @@
   // bypass this Worker's validation and honeypot:
   //   npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
   "vars": {
-    "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co"
+    "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co",
+
+    // Walkthrough delivery. RESEND_API_KEY is a secret, set separately:
+    //   npx wrangler secret put RESEND_API_KEY
+    //
+    // WALKTHROUGH_FROM must be an address on a DOMAIN YOU HAVE VERIFIED in
+    // Resend. Until a domain is verified, Resend only permits sending from
+    // onboarding@resend.dev and only TO the address you signed up with. That
+    // sandbox is fine for reading the email yourself; it cannot reach a single
+    // real reader. /api/status reports sandbox:true so this is never mistaken
+    // for working delivery.
+    "WALKTHROUGH_FROM": "onboarding@resend.dev",
+
+    // Optional. A blind copy of every walkthrough, so your inbox is the
+    // delivery log and you see exactly what each reader sees.
+    "FOUNDER_BCC": ""
   },
 
   // Per-IP throttle on /api/signup. Without this the endpoint is an open
