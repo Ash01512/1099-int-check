@@ -39,31 +39,74 @@ const SECURITY_HEADERS = {
 // The walkthrough itself. Plain text on purpose: this audience reads mail in
 // terminals and clients that distrust HTML, and the content is instructions,
 // not marketing. It never claims the reader is finished, matching the page.
-const WALKTHROUGH_TEXT = `Checking your 1099-INTs before October 15
+const WALKTHROUGH_TEXT = `Short version: pull one IRS transcript, compare it against
+your own list of accounts, and find the interest you forgot to report.
+Twenty minutes if you already have an IRS login. Closer to an hour if not.
 
-You filed an extension, so you have something most filers don't: the IRS
-record of what was reported under your SSN is complete enough to check, and
-your return isn't in yet. That overlap closes October 15.
+You filed an extension, so your return isn't in yet and the IRS has had
+since April to post what payers reported under your SSN. That window closes
+Thursday, October 15, 2026. There is no second extension.
 
-Here is the whole method. It takes about twenty minutes.
+The transcript is not a complete record of your 2025 interest and never will
+be. It shows most of what was filed, not all of it. It is still the fastest
+way to find the account you forgot.
+
+Here is the whole method.
 
 1. Pull your Wage & Income Transcript
-   Go to irs.gov/individuals/get-transcript and sign in. Choose
-   "Wage & Income Transcript" for tax year 2025.
-   Expect an identity check. This is the step people quit on. Budget ten
-   minutes and have a photo ID and your phone to hand.
+   Go to https://www.irs.gov/individuals/get-transcript and sign in.
+   Then: tax year 2025, Wage and Income Transcript, download the PDF.
 
-2. Find the interest section
-   The transcript groups forms by type. You want the 1099-INT entries.
-   For each one, note two things: the payer name, and Box 1.
+   Sign-in runs through ID.me, and this is the step people quit on. First
+   time through, budget thirty minutes, not five. Have on hand:
+   - a government photo ID you can photograph front and back
+   - your SSN
+   - a mobile number billed in your own name
+
+   That last one is the usual failure. Google Voice, prepaid, and lines on a
+   family plan in someone else's name often fail the phone match. When
+   self-service fails, ID.me routes you to a live video call and the queue
+   can run hours. Start on a weekday morning.
+
+   If ID.me will not pass you at all, the paper route is Form 4506-T with
+   box 8 ticked. Note that "Get Transcript by Mail" and the automated phone
+   line do not offer Wage and Income at all. Allow several weeks. If the ID
+   check fails you in September, send the 4506-T the same day.
+
+2. Find the interest entries
+   Search the PDF for "1099-INT". For each entry note the payer name and
+   Box 1, interest income.
+
+   Then note these, because they are easy to skip and they move money:
+   - Box 3, US Treasury interest. Taxable federally, exempt from state and
+     local tax. T-bills and Treasury money market funds land here.
+   - Box 8, tax-exempt interest. Not taxable, still has to be reported.
+   - Box 4, federal tax withheld. Backup withholding is your money back.
+   - Box 2, early withdrawal penalty. Deductible if you broke a CD.
+
+   Now search the same PDF for "1099-MISC", "1099-NEC" and "1099-OID".
+   Account opening bonuses usually arrive as interest on a 1099-INT, but
+   referral bonuses are typically reported on a 1099-MISC or 1099-NEC
+   instead. Brokered CDs and zeros report as 1099-OID. Searching the extra
+   form types costs you nothing and catches the ones that went the other way.
 
 3. Build your own list
-   From your records, list every account that paid you interest in 2025,
-   with the amount. Bank statements, year-end summaries, whatever you have.
+   From your records, list every account that paid you interest in 2025 with
+   the amount. Bank statements, year-end summaries, whatever you have.
 
-4. Compare the two lists
-   Work down the transcript. Any payer the IRS has that your list does not
-   is one you would have filed without. Add it before you file.
+4. Compare the two lists, both directions
+   Transcript has a payer you don't: that is the one you would have filed
+   without. Add it.
+   Amounts disagree by more than rounding: the IRS matches against the
+   transcript figure, so work out why before you file. Usually a bonus
+   posted as interest, or a joint account reported in full under one SSN.
+   You have a payer the transcript doesn't: report it anyway. Accounts
+   paying under ten dollars generate no 1099 at all and the interest is
+   still taxable. This is the case no transcript can catch for you.
+
+   Where it goes: total taxable interest on Form 1040 line 2b, tax-exempt on
+   line 2a. Over 1,500 dollars of taxable interest and you also file
+   Schedule B, which with ten-plus accounts you almost certainly will.
 
 What this does not tell you
    That you are finished. The IRS does not treat the current processing year
@@ -71,12 +114,18 @@ What this does not tell you
    comparison is not a guarantee. The only claim here is the narrow one:
    these are the payers the transcript shows that your figures do not.
 
+   Corrected 1099s take another four to six weeks to reach the transcript
+   after the payer issues them, so a pull today can miss a correction made
+   in July. If you are filing in October, pull once now and once in the
+   first week of October and compare. The second pull takes five minutes,
+   because you are already verified.
+
 If you get stuck at the identity check, or the transcript is missing a payer
 you know about, reply to this email and tell me what happened. I read every
 one.
 
 Not a tax preparer. Not tax advice.
-`;
+`
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -159,12 +208,16 @@ async function sendWalkthrough(env, email) {
   const body = {
     from: env.WALKTHROUGH_FROM,
     to: [email],
-    subject: "Checking your 1099-INTs before October 15",
+    subject: "Find the 1099-INT you forgot, before Oct 15",
     text: WALKTHROUGH_TEXT,
   };
   // A blind copy to the founder makes the inbox the delivery log: you see
   // exactly what every reader sees, with no extra infrastructure.
   if (env.FOUNDER_BCC) body.bcc = [env.FOUNDER_BCC];
+  // The email asks people to reply. Without reply_to those replies vanish,
+  // killing the only support channel and the only engagement signal.
+  const replyTo = env.WALKTHROUGH_REPLY_TO || env.FOUNDER_BCC;
+  if (replyTo) body.reply_to = replyTo;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -172,15 +225,24 @@ async function sendWalkthrough(env, email) {
       headers: {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         "Content-Type": "application/json",
+        // A repeat signup returns 409 and still reaches this send. Without
+        // this, re-submitting an address re-sends the email every time.
+        "Idempotency-Key": `walkthrough:${email}`,
       },
       body: JSON.stringify(body),
+      // Workers fetch has no default timeout. A hung connection would block
+      // the signup response, because the send is awaited before replying.
+      signal: AbortSignal.timeout(10000),
     });
     if (res.ok) return { ok: true };
     // Log the provider's own words. A silent send failure is the exact
     // class of bug this project keeps finding.
     const detail = await res.text().catch(() => "");
     console.error("WALKTHROUGH SEND FAILED", res.status, detail.slice(0, 300));
-    return { ok: false, reason: "provider_error" };
+    // Surface the provider status so a failed send is diagnosable without
+    // log access. 401 means a bad key; 403 means the sandbox refused a
+    // recipient that is not the account owner. Different fixes entirely.
+    return { ok: false, reason: "provider_error", status: res.status };
   } catch (err) {
     console.error("WALKTHROUGH SEND THREW", (err && err.message) || String(err));
     return { ok: false, reason: "unreachable" };
@@ -285,7 +347,12 @@ async function handleSignup(request, env) {
     // Row is committed. Now try to deliver, and tell the caller which of
     // those two things actually happened.
     const sent = await sendWalkthrough(env, email);
-    return json({ ok: true, delivered: sent.ok }, 201);
+    const out = { ok: true, delivered: sent.ok };
+    if (!sent.ok) {
+      out.delivery_reason = sent.reason;
+      if (sent.status) out.delivery_status = sent.status;
+    }
+    return json(out, 201);
   }
 
   // The database trigger raises PT429, which PostgREST surfaces as a real 429.
@@ -313,6 +380,9 @@ export default {
         ok: true,
         configured: isConfigured(env),
         delivery: Boolean(env.RESEND_API_KEY && env.WALKTHROUGH_FROM),
+        // Resend's sandbox sender can only reach the account owner. Reporting
+        // delivery:true from it would claim reach this cannot deliver.
+        sandbox: String(env.WALKTHROUGH_FROM || "").includes("resend.dev"),
       });
     }
 
