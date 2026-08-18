@@ -151,11 +151,40 @@ you can open directly in a browser.
 
 | Control | Behaviour |
 |---|---|
-| Rate limit | 5 per minute per IP via the `SIGNUP_LIMITER` binding → `429`. If the binding is missing the Worker logs a warning rather than pretending to be protected. |
+| Rate limit | 5 per minute per client, enforced by a Postgres trigger → `429`. See below. |
 | Origin check | A cross-site `Origin` is rejected `403`. A missing `Origin` (curl, server-to-server) is allowed, since blocking it buys nothing and breaks scripted testing. |
 | Honeypot | A filled hidden field is answered `201` and discarded, so bots get no signal. |
 | Enumeration | A duplicate address returns exactly the same `201 {"ok":true}` as a new one. A distinct "already subscribed" would let anyone test whether a given person is on the list. |
 | Normalisation | Addresses are lowercased before storage, matching the `lower(email)` unique index. |
+
+#### Why the rate limit lives in Postgres
+
+The obvious place is Cloudflare's Workers rate-limit binding. It does not work
+for this. Its own documentation calls it
+["permissive, eventually consistent, and intentionally designed to not be used
+as an accurate accounting system"](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/),
+with per-colo counters updated asynchronously, so *"rapid requests against the
+same key may not be immediately reflected."*
+
+A rapid burst from one IP is exactly the attack, and exactly the case it does
+not catch. Measured on production: **14 of 14 writes succeeded** against a
+configured 5/60 limit, with no error and no exception — the binding returned
+`success: true` every time.
+
+This is invisible in local development, because `wrangler dev` implements the
+limiter synchronously and it appears to work perfectly.
+
+So the limit is enforced by a `BEFORE INSERT` trigger that counts rows for the
+same `ip_hash` in the last minute and raises `PT429`, which PostgREST surfaces
+as a real HTTP `429`. Postgres counts synchronously, so the limit actually
+holds. Measured on production after the change: **1 accepted, 14 rejected.**
+
+The Cloudflare binding is kept as a cheap first pass for sustained load, and now
+logs loudly if it ever stops returning a usable result.
+
+`ip_hash` is a salted SHA-256 of the client IP, computed in the Worker. The raw
+address is never stored. Note that IPv4 and IPv6 clients hash to different
+buckets, so a dual-stack client gets two allowances.
 
 ### The Worker
 
