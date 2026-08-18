@@ -36,6 +36,48 @@ const SECURITY_HEADERS = {
   "Cross-Origin-Opener-Policy": "same-origin",
 };
 
+// The walkthrough itself. Plain text on purpose: this audience reads mail in
+// terminals and clients that distrust HTML, and the content is instructions,
+// not marketing. It never claims the reader is finished, matching the page.
+const WALKTHROUGH_TEXT = `Checking your 1099-INTs before October 15
+
+You filed an extension, so you have something most filers don't: the IRS
+record of what was reported under your SSN is complete enough to check, and
+your return isn't in yet. That overlap closes October 15.
+
+Here is the whole method. It takes about twenty minutes.
+
+1. Pull your Wage & Income Transcript
+   Go to irs.gov/individuals/get-transcript and sign in. Choose
+   "Wage & Income Transcript" for tax year 2025.
+   Expect an identity check. This is the step people quit on. Budget ten
+   minutes and have a photo ID and your phone to hand.
+
+2. Find the interest section
+   The transcript groups forms by type. You want the 1099-INT entries.
+   For each one, note two things: the payer name, and Box 1.
+
+3. Build your own list
+   From your records, list every account that paid you interest in 2025,
+   with the amount. Bank statements, year-end summaries, whatever you have.
+
+4. Compare the two lists
+   Work down the transcript. Any payer the IRS has that your list does not
+   is one you would have filed without. Add it before you file.
+
+What this does not tell you
+   That you are finished. The IRS does not treat the current processing year
+   as final, and a payer who never filed will never appear. A clean
+   comparison is not a guarantee. The only claim here is the narrow one:
+   these are the payers the transcript shows that your figures do not.
+
+If you get stuck at the identity check, or the transcript is missing a payer
+you know about, reply to this email and tell me what happened. I read every
+one.
+
+Not a tax preparer. Not tax advice.
+`;
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function json(body, status = 200, extra = {}) {
@@ -93,6 +135,55 @@ function originAllowed(request) {
     return new URL(origin).host === new URL(request.url).host;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Send the walkthrough the page promised.
+ *
+ * The page says "the walkthrough is on its way." If nothing sends, that
+ * sentence is a lie told to the first real users this project has. So the
+ * send happens here, and the response reports what actually occurred rather
+ * than what we hoped occurred.
+ *
+ * Ordering matters: the signup row is already committed before this runs.
+ * A delivery failure must never cost you the address — losing a lead is
+ * worse than a late email, and the address is the whole point of the page.
+ */
+async function sendWalkthrough(env, email) {
+  if (!env.RESEND_API_KEY || !env.WALKTHROUGH_FROM) {
+    console.error("WALKTHROUGH NOT SENT - delivery unconfigured (RESEND_API_KEY / WALKTHROUGH_FROM)");
+    return { ok: false, reason: "unconfigured" };
+  }
+
+  const body = {
+    from: env.WALKTHROUGH_FROM,
+    to: [email],
+    subject: "Checking your 1099-INTs before October 15",
+    text: WALKTHROUGH_TEXT,
+  };
+  // A blind copy to the founder makes the inbox the delivery log: you see
+  // exactly what every reader sees, with no extra infrastructure.
+  if (env.FOUNDER_BCC) body.bcc = [env.FOUNDER_BCC];
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return { ok: true };
+    // Log the provider's own words. A silent send failure is the exact
+    // class of bug this project keeps finding.
+    const detail = await res.text().catch(() => "");
+    console.error("WALKTHROUGH SEND FAILED", res.status, detail.slice(0, 300));
+    return { ok: false, reason: "provider_error" };
+  } catch (err) {
+    console.error("WALKTHROUGH SEND THREW", (err && err.message) || String(err));
+    return { ok: false, reason: "unreachable" };
   }
 }
 
@@ -190,7 +281,12 @@ async function handleSignup(request, env) {
   // fresh signup: telling the caller "already on the list" would let anyone
   // test whether a given address is subscribed, which is an enumeration leak
   // on what is, for this audience, a sensitive list.
-  if (res.ok || res.status === 409) return json({ ok: true }, 201);
+  if (res.ok || res.status === 409) {
+    // Row is committed. Now try to deliver, and tell the caller which of
+    // those two things actually happened.
+    const sent = await sendWalkthrough(env, email);
+    return json({ ok: true, delivered: sent.ok }, 201);
+  }
 
   // The database trigger raises PT429, which PostgREST surfaces as a real 429.
   // This is the limit that actually holds; the Cloudflare binding above is a
@@ -213,7 +309,11 @@ export default {
     // Lets the page discover a broken backend on load, instead of only after
     // a visitor has typed an address and pressed the button.
     if (pathname === "/api/status") {
-      return json({ ok: true, configured: isConfigured(env) });
+      return json({
+        ok: true,
+        configured: isConfigured(env),
+        delivery: Boolean(env.RESEND_API_KEY && env.WALKTHROUGH_FROM),
+      });
     }
 
     if (pathname === "/api/signup") {

@@ -333,7 +333,9 @@
           // stored. A distinct "already on the list" would let anyone test
           // whether a given person is subscribed.
           form.style.display = "none";
-          say("You're on the list. The walkthrough is on its way.", "ok");
+          say(r.data.delivered
+              ? "Sent. Check your inbox, and your spam folder after that."
+              : "You're on the list. I'll send the walkthrough shortly.", "ok");
           return;
         }
         reset();
