@@ -20,8 +20,19 @@ what the page claims and, more importantly, what it refuses to claim.
 filename is what puts Pages in advanced mode. Never edit `dist/`, and never
 commit it — CI builds it fresh.
 
+### Tests
+`npm test` — Node's built-in runner, no framework, no extra dependencies.
+Runs in CI **before** the deploy, because the post-deploy curl checks only run
+against production and can only report that a bad deploy already happened.
+
+The suite covers the properties whose failure would be silent: the duplicate
+signup response staying byte-identical to a new one (a difference leaks list
+membership), the honeypot writing no row, the origin check, provider dispatch
+and payload shapes, the IP salt actually reaching the digest, and `/api/status`
+never echoing a secret. Add to it when you touch `handleSignup`.
+
 ### Custom deploy hooks
-- Pre-merge: `npm run build` must succeed (it fails loudly on a missing input)
+- Pre-merge: `npm test` and `npm run build` must succeed
 - Deploy trigger: automatic on push to main, via GitHub Actions
 - Health check: `GET /healthz` (200), `GET /api/status` (`configured:true`),
   `GET /` (200 + CSP header present), `GET /nonexistent` (404)
@@ -130,8 +141,12 @@ npm run dev                      # builds dist/, then wrangler pages dev
 ## The retired hostname
 `1099-int-check.ashabbas-2023.workers.dev` was the production URL until
 2026-08-19. It is still live, and it is now a **redirect only** — see
-`redirect/`, a separate Worker deployed with `cd redirect && npx wrangler
-deploy`. It is not part of the Pages build and CI does not touch it.
+`redirect/`. It is a separate Worker, not part of the Pages build, but **CI
+deploys it on every push** (`npm run deploy:redirect` locally). That is
+deliberate: its target is a hardcoded URL, so deploying it by hand meant a
+change could be committed, reviewed and merged while the live redirect still
+pointed elsewhere. The deploy workflow also asserts it still lands on
+production.
 
 It answers `301` to GET/HEAD and `308` to everything else, preserving path and
 query so shared `?src=` links keep working. Redeploy it only if the production

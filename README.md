@@ -93,6 +93,26 @@ disables the input and shows a visible warning. That is deliberate: a form that
 accepts an address and drops it is worse than one that admits it is not wired up,
 because the silence reads as "nobody was interested" when nobody was recorded.
 
+## Tests
+
+```bash
+npm test
+```
+
+Node's built-in test runner. No framework, no extra dependencies. CI runs it
+before deploying, so a failure stops the deploy rather than reporting one.
+
+The suite deliberately targets the behaviour whose failure is *silent* — the
+things that would still return a 201 while being wrong:
+
+- a duplicate signup answering identically to a new one, so the form cannot be
+  used to test whether someone is on the list
+- a filled honeypot writing no row
+- the cross-origin rejection
+- provider dispatch and the exact payload each provider receives
+- the IP salt actually reaching the digest, and the raw address never being stored
+- `/api/status` never echoing a secret back
+
 ## Local development
 
 ```bash

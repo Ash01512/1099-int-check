@@ -29,6 +29,15 @@ jobs:
 
       - run: npm ci
 
+      # Before the deploy, not after. The curl checks below only run against
+      # production, which means they can only tell you a bad deploy already
+      # happened. These assert the properties whose failure is silent — a
+      # duplicate signup that leaks list membership, a honeypot that writes a
+      # row, an origin check that stopped checking. None change a status code
+      # anyone would notice.
+      - name: Test
+        run: npm test
+
       # dist/ is gitignored, so CI must build it or there is nothing to upload.
       - name: Build
         run: npm run build
@@ -47,12 +56,24 @@ jobs:
           # the deploy does not gain a second way to fail on a missing secret.
           CLOUDFLARE_ACCOUNT_ID: 9b76753285cc0229e3f5161d25710d45
 
+      # The retired workers.dev hostname. Deployed here rather than by hand so
+      # it cannot drift: its redirect target is a hardcoded URL, so a change to
+      # it could otherwise be committed, reviewed and merged while the live
+      # redirect still pointed somewhere else. wrangler deploy is idempotent,
+      # so running it every time costs a few seconds and removes the drift.
+      - name: Deploy the retired-hostname redirect
+        run: npx wrangler deploy -c redirect/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 9b76753285cc0229e3f5161d25710d45
+
       # Deploying is not the same as working. Prove the page and the API
       # actually respond before calling the run green.
       - name: Verify production
         run: |
           set -uo pipefail
           URL="https://1099-int-check.pages.dev"
+          OLD_URL="https://1099-int-check.ashabbas-2023.workers.dev"
 
           # NEVER write `curl ... | grep -q ...` in this file.
           #
@@ -114,6 +135,14 @@ jobs:
               *"rel=\"canonical\" href=\"$URL/\""*) echo "  canonical matches $URL -> yes" ;;
               *) echo "  canonical MISSING or pointing elsewhere -- check public/index.html"; fail=1 ;;
             esac
+
+            # The retired hostname must still land on the real site. Its target
+            # is hardcoded, so this is the check that catches a site move that
+            # forgot redirect/index.js.
+            local redirect_to
+            redirect_to=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 30 "$OLD_URL/")
+            echo "  $OLD_URL/ -> $redirect_to"
+            [ "$redirect_to" = "$URL/" ] || fail=1
 
             return $fail
           }
