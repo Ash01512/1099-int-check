@@ -468,12 +468,26 @@ async function handleSignup(request, env) {
   // case would otherwise leave the stored value inconsistent with the key.
   const email = raw.toLowerCase();
 
-  const row = {
-    email,
-    source: clamp(payload.source, 64) || "direct",
-    page: clamp(payload.page, 64) || "guide-landing",
-    user_agent: clamp(request.headers.get("user-agent"), 512),
-    ip_hash: await hashIp(
+  /**
+   * The insert goes through a SECURITY DEFINER function rather than straight
+   * at the table, which is what lets the IP hash stay out of the mailing list.
+   *
+   * p_ip_hash is *sent* but never stored beside the address. The function uses
+   * it to bucket the throttle, writes it to a separate table that holds no
+   * email at all, and purges those rows as it goes. Previously it was a column
+   * on `signups`, so a per-visitor identifier sat next to a person's address
+   * indefinitely to serve a sixty-second window.
+   *
+   * The same change removed anon's write access to `signups` entirely — it can
+   * execute this one function and nothing else. There is no longer any policy
+   * or grant that would let the publishable key touch the table directly.
+   */
+  const args = {
+    p_email: email,
+    p_source: clamp(payload.source, 64) || "direct",
+    p_page: clamp(payload.page, 64) || "guide-landing",
+    p_user_agent: clamp(request.headers.get("user-agent"), 512),
+    p_ip_hash: await hashIp(
       request.headers.get("cf-connecting-ip") || "unknown",
       env.IP_HASH_SALT
     ),
@@ -481,25 +495,27 @@ async function handleSignup(request, env) {
 
   let res;
   try {
-    res = await fetch(`${env.SUPABASE_URL}/rest/v1/signups`, {
+    res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/signup`, {
       method: "POST",
       headers: {
         apikey: env.SUPABASE_PUBLISHABLE_KEY,
         Authorization: `Bearer ${env.SUPABASE_PUBLISHABLE_KEY}`,
         "Content-Type": "application/json",
-        Prefer: "return=minimal",
       },
-      body: JSON.stringify(row),
+      body: JSON.stringify(args),
     });
   } catch {
     return json({ error: "upstream_unreachable" }, 502);
   }
 
-  // 23505 is the unique violation on lower(email). Answer it identically to a
-  // fresh signup: telling the caller "already on the list" would let anyone
-  // test whether a given address is subscribed, which is an enumeration leak
-  // on what is, for this audience, a sensitive list.
-  if (res.ok || res.status === 409) {
+  // A repeat address is absorbed by ON CONFLICT DO NOTHING inside the
+  // function, so it arrives here as an ordinary success rather than the 409 a
+  // direct insert used to raise. That is the point: telling the caller
+  // "already on the list" would let anyone test whether a given address is
+  // subscribed, which is an enumeration leak on what is, for this audience, a
+  // sensitive list. The two cases are now indistinguishable at the database,
+  // not merely flattened afterwards.
+  if (res.ok) {
     // Row is committed. Now try to deliver, and tell the caller which of
     // those two things actually happened.
     const sent = await sendWalkthrough(env, email);
@@ -511,9 +527,11 @@ async function handleSignup(request, env) {
     return json(out, 201);
   }
 
-  // The database trigger raises PT429, which PostgREST surfaces as a real 429.
+  // public.signup() raises PT429, which PostgREST surfaces as a real 429.
   // On Pages this is the ONLY rate limit in front of the table, since the edge
-  // binding above cannot exist here. It was always the one that actually held.
+  // binding above cannot exist here. It was always the one that actually held:
+  // Postgres counts synchronously, where the edge binding is documented as
+  // permissive and eventually consistent.
   if (res.status === 429) {
     return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
   }

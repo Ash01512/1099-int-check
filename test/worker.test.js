@@ -40,7 +40,11 @@ function stubFetch({ supabaseStatus = 201, providerStatus = 201 } = {}) {
     };
     if (href.includes("supabase")) {
       sent.supabase.push(record);
-      return new Response("", { status: supabaseStatus });
+      // 204 and 205 must be constructed with a null body or Response throws,
+      // and PostgREST answers a void function with 204 — so getting this wrong
+      // makes the stub, not the worker, the thing under test.
+      const bodyless = supabaseStatus === 204 || supabaseStatus === 205;
+      return new Response(bodyless ? null : "", { status: supabaseStatus });
     }
     sent.provider.push(record);
     return new Response(JSON.stringify({ id: "stub" }), { status: providerStatus });
@@ -78,12 +82,12 @@ describe("email validation", () => {
 
   test("lowercases before storing, matching the lower(email) unique index", async () => {
     await signup({ email: "Reader@Example.COM" });
-    assert.equal(sent.supabase[0].body.email, "reader@example.com");
+    assert.equal(sent.supabase[0].body.p_email, "reader@example.com");
   });
 
   test("clamps overlong fields rather than forwarding them", async () => {
     await signup({ email: "reader@example.com", source: "x".repeat(500) });
-    assert.equal(sent.supabase[0].body.source.length, 64);
+    assert.equal(sent.supabase[0].body.p_source.length, 64);
   });
 });
 
@@ -130,15 +134,18 @@ describe("origin check", () => {
 
 describe("duplicate signups", () => {
   // The whole point: a distinct answer for an already-stored address would let
-  // anyone test whether a given person is on the list.
-  test("answer is byte-identical to a new signup", async () => {
+  // anyone test whether a given person is on the list. This is now enforced in
+  // the database — public.signup() absorbs a repeat with ON CONFLICT DO
+  // NOTHING — so both cases arrive here as an ordinary success. PostgREST
+  // answers a void function with 204, and 200 is accepted just as readily.
+  test("answer is byte-identical however the database reports success", async () => {
     const env = { BREVO_API_KEY: "k", WALKTHROUGH_FROM: "hi@example.com" };
 
-    stubFetch({ supabaseStatus: 201 });
+    stubFetch({ supabaseStatus: 204 });
     const fresh = await signup({ email: "reader@example.com" }, { env });
     const freshBody = await fresh.text();
 
-    stubFetch({ supabaseStatus: 409 });
+    stubFetch({ supabaseStatus: 200 });
     const dupe = await signup({ email: "reader@example.com" }, { env });
     const dupeBody = await dupe.text();
 
@@ -146,13 +153,15 @@ describe("duplicate signups", () => {
     assert.equal(dupeBody, freshBody);
   });
 
-  test("a duplicate still triggers a send", async () => {
-    stubFetch({ supabaseStatus: 409 });
+  test("the worker never branches on whether the address was new", async () => {
+    // It cannot: the function returns void either way. A branch here would be
+    // the leak, so its absence is the property worth pinning.
+    stubFetch({ supabaseStatus: 204 });
     await signup(
       { email: "reader@example.com" },
       { env: { BREVO_API_KEY: "k", WALKTHROUGH_FROM: "hi@example.com" } }
     );
-    assert.equal(sent.provider.length, 1);
+    assert.equal(sent.provider.length, 1, "the walkthrough is sent regardless");
   });
 });
 
@@ -232,33 +241,56 @@ describe("provider dispatch", () => {
   });
 });
 
-describe("ip_hash", () => {
+describe("the client IP", () => {
+  test("goes through a database function, never a direct table write", async () => {
+    // anon has no privileges on public.signups at all any more. Writing
+    // straight at the table would 401, and would also reinstate storing the
+    // hash beside the address.
+    await signup({ email: "a@example.com" }, { env: { IP_HASH_SALT: "s" } });
+    assert.match(sent.supabase[0].url, /\/rest\/v1\/rpc\/signup$/);
+  });
+
   test("the salt actually changes the hash", async () => {
-    // The review found IP_HASH_SALT unset in production, so ip_hash was
+    // The review found IP_HASH_SALT unset in production, so the hash was
     // computed with a salt published in this repo and was reversible.
     await signup({ email: "a@example.com" }, {
       env: { IP_HASH_SALT: "salt-one" },
       headers: { "cf-connecting-ip": "203.0.113.7" },
     });
-    const one = sent.supabase[0].body.ip_hash;
+    const one = sent.supabase[0].body.p_ip_hash;
 
     stubFetch();
     await signup({ email: "a@example.com" }, {
       env: { IP_HASH_SALT: "salt-two" },
       headers: { "cf-connecting-ip": "203.0.113.7" },
     });
-    const two = sent.supabase[0].body.ip_hash;
+    const two = sent.supabase[0].body.p_ip_hash;
 
     assert.notEqual(one, two, "salt must be part of the digest");
     assert.match(one, /^[0-9a-f]{64}$/);
   });
 
-  test("the raw address is never stored", async () => {
+  test("the raw address is never sent", async () => {
     await signup({ email: "a@example.com" }, {
       env: { IP_HASH_SALT: "s" },
       headers: { "cf-connecting-ip": "203.0.113.7" },
     });
     assert.ok(!JSON.stringify(sent.supabase[0].body).includes("203.0.113.7"));
+  });
+
+  test("the hash is passed as an argument, not as a column on the signup", async () => {
+    // The distinction is the whole fix. p_ip_hash is consumed by the throttle
+    // and written to a table holding no email; it is not a field of the row.
+    await signup({ email: "a@example.com" }, {
+      env: { IP_HASH_SALT: "s" },
+      headers: { "cf-connecting-ip": "203.0.113.7" },
+    });
+    const body = sent.supabase[0].body;
+    assert.ok(!("ip_hash" in body), "ip_hash must not be a stored column");
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ["p_email", "p_ip_hash", "p_page", "p_source", "p_user_agent"]
+    );
   });
 });
 

@@ -60,12 +60,15 @@ POSTing straight at the database.
 
 ### Write-only from the internet
 
-RLS is on, `anon` is granted `INSERT` and nothing else, and there is no `SELECT`
+`anon` has **no privileges on the table at all** — no policy, no grant. Writes
+go through `public.signup(...)`, a `SECURITY DEFINER` function that `anon` may
+execute and nothing else. There is no `SELECT`
 policy. A leaked publishable key lets someone add a row; it does not let them
 read the list. Verified:
 
 ```
-INSERT as anon   201
+call signup()    204  the only thing anon may do
+INSERT as anon   401  permission denied for table signups
 SELECT as anon   401  permission denied for table signups
 duplicate        409  unique violation
 malformed email  400  check constraint violation
@@ -225,7 +228,15 @@ is gone. The noise is deliberate: it should not be possible to forget which
 layer is actually enforcing.
 
 `ip_hash` is a salted SHA-256 of the client IP, computed server-side. The raw
-address is never stored. Note that IPv4 and IPv6 clients hash to different
+address is never sent anywhere, and the hash is **not stored with the email**:
+it is passed as an argument to `public.signup(...)`, recorded in
+`public.rate_limit_hits` — a table containing no addresses — and purged after
+two minutes.
+
+That separation is the point. It previously lived as a column on `signups`, so
+a per-visitor identifier sat beside a person's email address indefinitely in
+order to serve a sixty-second window. The throttle needs it briefly; the
+mailing list never needed it. Note that IPv4 and IPv6 clients hash to different
 buckets, so a dual-stack client gets two allowances.
 
 ### The server, and two traps
@@ -264,11 +275,13 @@ its own file and switching to a hash or nonce would close it.
 - No bank logins and no credentials are ever requested.
 - No documents are uploaded. Readers pull their own transcript from IRS.gov and
   keep it. No transcript, and no tax figure, ever reaches this system.
-- The data collected is the email address typed into the form, plus the
-  `?src=` value from the link, the page name, the browser's user-agent
-  string, and a salted SHA-256 hash of the client IP used for rate limiting.
-  It is stored in a Supabase Postgres database **you control**, not with a
+- The data stored against an address is the email itself, plus the `?src=`
+  value from the link, the page name, and the browser's user-agent string. It
+  lives in a Supabase Postgres database **you control**, not with a
   third-party form provider.
+- A salted SHA-256 hash of the client IP is used for rate limiting, but is
+  **not stored with the address**. It goes to a separate table that holds no
+  emails and is purged after two minutes.
 - `IP_HASH_SALT` must be set as a secret. SHA-256 is fast and the IPv4 space
   is 2^32, so with a known salt every stored hash can be brute-forced back to
   an address. This repository is public, so the fallback salt in `src/index.js`

@@ -79,11 +79,23 @@ means every send is rejected while `delivery` still reads true.
 ## Backend
 - Supabase project `dorpekyszdlhvcozuocj` (ap-south-1), table `public.signups`
 - `SUPABASE_URL` is a Pages var; `SUPABASE_PUBLISHABLE_KEY` is a Pages secret
-- The signup rate limit is enforced by a Postgres trigger. On Pages this is now
-  the **only** limit: Pages Functions cannot bind the Cloudflare rate limiter at
-  all. That is a smaller loss than it sounds — Cloudflare documents the edge
-  binding as permissive and eventually consistent, and it let 14 of 14 rapid
-  writes through a 5/60 limit in production. Do not try to reintroduce it here.
+- **Signups go through `public.signup(...)`, not a direct table insert.** It is
+  `SECURITY DEFINER`; `anon` has *no* privileges on `public.signups` at all —
+  no policy, no grant, no direct write. The publishable key can call that one
+  function and nothing else.
+- **The client IP hash is never stored beside an address.** It is passed as an
+  argument, used to bucket the throttle, written to `public.rate_limit_hits`
+  (which holds no email), and purged after two minutes. It used to be a column
+  on `signups`, which meant a per-visitor identifier sat next to a person's
+  address indefinitely to serve a sixty-second window. Do not add it back.
+- A repeat address is absorbed by `ON CONFLICT DO NOTHING` inside the function,
+  so a duplicate is indistinguishable from a new signup **at the database**
+  rather than flattened afterwards by the Worker.
+- The rate limit is enforced in Postgres. On Pages this is the **only** limit:
+  Pages Functions cannot bind the Cloudflare rate limiter at all. That is a
+  smaller loss than it sounds — Cloudflare documents the edge binding as
+  permissive and eventually consistent, and it let 14 of 14 rapid writes
+  through a 5/60 limit in production. Do not try to reintroduce it here.
 
 ## Known platform traps
 - **Pages runs `_worker.js` ahead of static assets, and that ordering is load
