@@ -43,6 +43,15 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
 # then repeat each with --env preview
 ```
 
+## Delivery is NOT finished — see GOING-LIVE.md
+The walkthrough cannot reach anyone but the Resend account owner, and no
+configuration fixes it. Resend verifies a sending domain via SPF/DKIM/MX
+records in that domain's DNS zone, and `pages.dev` is a zone Cloudflare owns —
+there is no way to publish records under it. **Automated delivery to real
+visitors requires registering a domain.** `GET /api/status` reports
+`sandbox:true` separately from `delivery` so a sandbox send is never mistaken
+for working delivery. Full runbook in `GOING-LIVE.md`.
+
 ## Backend
 - Supabase project `dorpekyszdlhvcozuocj` (ap-south-1), table `public.signups`
 - `SUPABASE_URL` is a Pages var; `SUPABASE_PUBLISHABLE_KEY` is a Pages secret
