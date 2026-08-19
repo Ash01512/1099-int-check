@@ -54,17 +54,26 @@ jobs:
           set -uo pipefail
           URL="https://1099-int-check.pages.dev"
 
-          # Every check runs against the production hostname, and a fresh
-          # deployment does not reach every edge node at the same instant.
-          # A fixed sleep was not enough: run 32280595780 failed the canonical
-          # check while an edge was still serving the PREVIOUS production
-          # deployment, which predated that tag. Everything else passed, so it
-          # read as a content bug rather than a race.
+          # NEVER write `curl ... | grep -q ...` in this file.
           #
-          # So: retry the whole block until it is green, and fail only if it
-          # never is. Assertions are unchanged — this buys time, not leniency.
+          # grep -q exits the moment it matches. That closes the pipe, curl
+          # takes SIGPIPE, and under `set -o pipefail` the pipeline reports
+          # CURL's failure even though grep succeeded. Whether it happens at
+          # all depends on if curl finished writing before grep exited, so the
+          # check passes locally, passes on a small response, and fails on a
+          # big one. Run 32284480055 failed the canonical assertion 6/6 while
+          # the tag was demonstrably present and served.
+          #
+          # It also cost a wrong diagnosis: the earlier red run 32280595780
+          # was blamed on edge propagation and "fixed" with the retry loop
+          # below, which was papering over this instead.
+          #
+          # So: fetch once into a variable, then match with bash `case`. No
+          # pipeline, no subprocess, no exit status to misread. The retry is
+          # kept because genuine propagation delay does exist, but it is no
+          # longer load bearing.
           verify() {
-            local fail=0 code status
+            local fail=0 code status html headers headers_lc
 
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/healthz")
             echo "  GET /healthz -> $code"
@@ -72,7 +81,7 @@ jobs:
 
             status=$(curl -s --max-time 30 "$URL/api/status")
             echo "  GET /api/status -> $status"
-            echo "$status" | grep -q '"configured":true' || fail=1
+            case "$status" in *'"configured":true'*) ;; *) fail=1 ;; esac
 
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/")
             echo "  GET / -> $code"
@@ -83,12 +92,12 @@ jobs:
             # A _routes.json excluding "/" would silently drop them from the
             # page while leaving them on the API. That exact bug shipped once
             # already on Workers. Check the page itself.
-            if curl -s -o /dev/null -D - --max-time 30 "$URL/" | grep -qi '^content-security-policy'; then
-              echo "  CSP present on / -> yes"
-            else
-              echo "  CSP MISSING on / -- the asset server is running ahead of _worker.js"
-              fail=1
-            fi
+            headers=$(curl -s -o /dev/null -D - --max-time 30 "$URL/")
+            headers_lc=$(printf '%s' "$headers" | tr 'A-Z' 'a-z')
+            case "$headers_lc" in
+              *content-security-policy:*) echo "  CSP present on / -> yes" ;;
+              *) echo "  CSP MISSING on / -- the asset server is running ahead of _worker.js"; fail=1 ;;
+            esac
 
             # Pages answers an unmatched path with index.html and a 200 unless
             # public/404.html exists. Deleting that file turns every wrong URL
@@ -100,12 +109,11 @@ jobs:
             # The canonical URL is what stops old or duplicate hostnames
             # serving this same HTML from competing with the real one. It is a
             # hardcoded absolute URL, so it silently goes stale on a move.
-            if curl -s --max-time 30 "$URL/" | grep -q 'rel="canonical" href="'"$URL"'/"'; then
-              echo "  canonical matches $URL -> yes"
-            else
-              echo "  canonical MISSING or pointing elsewhere -- check public/index.html"
-              fail=1
-            fi
+            html=$(curl -s --max-time 30 "$URL/")
+            case "$html" in
+              *"rel=\"canonical\" href=\"$URL/\""*) echo "  canonical matches $URL -> yes" ;;
+              *) echo "  canonical MISSING or pointing elsewhere -- check public/index.html"; fail=1 ;;
+            esac
 
             return $fail
           }

@@ -107,12 +107,18 @@ means every send is rejected while `delivery` still reads true.
   value in `vars` also becomes the source of truth and outranks the secret.
 - `wrangler pages dev` does not watch `src/`. It serves `dist/`, so rerun
   `npm run build` (or `npm run dev`) after editing the worker.
-- **A fresh deployment does not reach every edge node at once.** The deploy
-  workflow retries its whole verification block up to 6 times rather than
-  sleeping once. Run 32280595780 failed the canonical check against an edge
-  still serving the previous deployment while every other check passed, which
-  reads as a content bug rather than a race. Do not "fix" a one-off red run by
-  weakening an assertion.
+- **Never write `curl ... | grep -q ...` in the deploy workflow.** `grep -q`
+  exits on first match, closing the pipe; `curl` takes SIGPIPE, and under
+  `set -o pipefail` the pipeline reports curl's failure even though grep
+  matched. It is a race — it depends on whether curl finished writing before
+  grep exited — so it passes locally and on small responses, and fails on CI.
+  Measured: `curl | grep -q` on the live page failed 1 in 10 locally and 6 in 6
+  on CI, while the string was demonstrably present. Fetch into a variable and
+  match with bash `case` instead. This bug also caused a **wrong diagnosis**:
+  red run 32280595780 was blamed on edge propagation and "fixed" with a retry
+  loop that was really just papering over it. The retry remains (propagation
+  delay is real) but is no longer load bearing.
+- Do not "fix" a red verification run by weakening an assertion.
 
 ## Local development
 ```bash
