@@ -27,12 +27,11 @@ commit it — CI builds it fresh.
   `GET /` (200 + CSP header present), `GET /nonexistent` (404)
 
 ### Required repository secret
-- `CLOUDFLARE_API_TOKEN` — needs **"Cloudflare Pages: Edit"** and
-  **"Account Settings: Read"**. The "Edit Cloudflare Workers" template does
-  **not** grant Pages access, so the token that worked before the migration
-  will fail with an authentication error. Recreate it at Cloudflare dashboard
-  → My Profile → API Tokens → Custom token. Add under repo Settings → Secrets
-  and variables → Actions.
+- `CLOUDFLARE_API_TOKEN` — needs **"Cloudflare Pages: Edit"**. The existing
+  token, created from the "Edit Cloudflare Workers" template, already carries
+  it: the first post-migration deploy authenticated and published fine
+  (run 32280595780). No token change was needed. If you ever recreate it,
+  Pages: Edit is the permission to check for.
 
 ### Pages secrets (set per environment, not in git)
 Both `production` and `preview` need their own copies — a secret set on one is
@@ -77,6 +76,12 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
   `configured:false`.
 - `wrangler pages dev` does not watch `src/`. It serves `dist/`, so rerun
   `npm run build` (or `npm run dev`) after editing the worker.
+- **A fresh deployment does not reach every edge node at once.** The deploy
+  workflow retries its whole verification block up to 6 times rather than
+  sleeping once. Run 32280595780 failed the canonical check against an edge
+  still serving the previous deployment while every other check passed, which
+  reads as a content bug rather than a race. Do not "fix" a one-off red run by
+  weakening an assertion.
 
 ## Local development
 ```bash

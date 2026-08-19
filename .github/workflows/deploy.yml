@@ -39,10 +39,9 @@ jobs:
         # preview would leave production stale while the run goes green.
         run: npx wrangler pages deploy --branch=main
         env:
-          # This token needs BOTH "Cloudflare Pages: Edit" and "Account
-          # Settings: Read". The "Edit Cloudflare Workers" template does not
-          # include Pages, so a token that worked for `wrangler deploy` will
-          # fail here with an authentication error.
+          # Needs "Cloudflare Pages: Edit". The existing token, created from
+          # the "Edit Cloudflare Workers" template, turned out to carry it
+          # already — confirmed by run 32280595780, where this step succeeded.
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           # Not a secret — it appears in every dashboard URL. Kept inline so
           # the deploy does not gain a second way to fail on a missing secret.
@@ -52,53 +51,75 @@ jobs:
       # actually respond before calling the run green.
       - name: Verify production
         run: |
-          set -euo pipefail
+          set -uo pipefail
           URL="https://1099-int-check.pages.dev"
 
-          echo "Waiting for the new version to propagate..."
-          sleep 15
+          # Every check runs against the production hostname, and a fresh
+          # deployment does not reach every edge node at the same instant.
+          # A fixed sleep was not enough: run 32280595780 failed the canonical
+          # check while an edge was still serving the PREVIOUS production
+          # deployment, which predated that tag. Everything else passed, so it
+          # read as a content bug rather than a race.
+          #
+          # So: retry the whole block until it is green, and fail only if it
+          # never is. Assertions are unchanged — this buys time, not leniency.
+          verify() {
+            local fail=0 code status
 
-          fail=0
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/healthz")
+            echo "  GET /healthz -> $code"
+            [ "$code" = "200" ] || fail=1
 
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/healthz")
-          echo "GET /healthz -> $code"
-          [ "$code" = "200" ] || fail=1
+            status=$(curl -s --max-time 30 "$URL/api/status")
+            echo "  GET /api/status -> $status"
+            echo "$status" | grep -q '"configured":true' || fail=1
 
-          status=$(curl -s --max-time 30 "$URL/api/status")
-          echo "GET /api/status -> $status"
-          echo "$status" | grep -q '"configured":true' || fail=1
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/")
+            echo "  GET / -> $code"
+            [ "$code" = "200" ] || fail=1
 
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/")
-          echo "GET / -> $code"
-          [ "$code" = "200" ] || fail=1
+            # The security headers live in _worker.js, and they only reach the
+            # page because Pages runs the script ahead of the asset server.
+            # A _routes.json excluding "/" would silently drop them from the
+            # page while leaving them on the API. That exact bug shipped once
+            # already on Workers. Check the page itself.
+            if curl -s -o /dev/null -D - --max-time 30 "$URL/" | grep -qi '^content-security-policy'; then
+              echo "  CSP present on / -> yes"
+            else
+              echo "  CSP MISSING on / -- the asset server is running ahead of _worker.js"
+              fail=1
+            fi
 
-          # The security headers live in _worker.js, and they only reach the
-          # page because Pages runs the script ahead of the asset server.
-          # A _routes.json excluding "/" would silently drop them from the
-          # page while leaving them on the API. That exact bug shipped once
-          # already on Workers. Check the page itself.
-          if curl -s -o /dev/null -D - --max-time 30 "$URL/" | grep -qi '^content-security-policy'; then
-            echo "CSP present on / -> yes"
-          else
-            echo "CSP MISSING on / -- the asset server is running ahead of _worker.js"
-            fail=1
-          fi
+            # Pages answers an unmatched path with index.html and a 200 unless
+            # public/404.html exists. Deleting that file turns every wrong URL
+            # into an indexable duplicate of the landing page.
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/nonexistent")
+            echo "  GET /nonexistent -> $code"
+            [ "$code" = "404" ] || fail=1
 
-          # Pages answers an unmatched path with index.html and a 200 unless
-          # public/404.html exists. Deleting that file turns every wrong URL
-          # into an indexable duplicate of the landing page.
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/nonexistent")
-          echo "GET /nonexistent -> $code"
-          [ "$code" = "404" ] || fail=1
+            # The canonical URL is what stops old or duplicate hostnames
+            # serving this same HTML from competing with the real one. It is a
+            # hardcoded absolute URL, so it silently goes stale on a move.
+            if curl -s --max-time 30 "$URL/" | grep -q 'rel="canonical" href="'"$URL"'/"'; then
+              echo "  canonical matches $URL -> yes"
+            else
+              echo "  canonical MISSING or pointing elsewhere -- check public/index.html"
+              fail=1
+            fi
 
-          # The canonical URL is what stops old or duplicate hostnames serving
-          # this same HTML from competing with the real one. It is a hardcoded
-          # absolute URL, so it silently goes stale the moment the site moves.
-          if curl -s --max-time 30 "$URL/" | grep -q 'rel="canonical" href="'"$URL"'/"'; then
-            echo "canonical matches $URL -> yes"
-          else
-            echo "canonical MISSING or pointing elsewhere -- check public/index.html"
-            fail=1
-          fi
+            return $fail
+          }
 
-          exit $fail
+          for attempt in 1 2 3 4 5 6; do
+            echo "verify attempt $attempt/6"
+            if verify; then
+              echo "production verified"
+              exit 0
+            fi
+            [ "$attempt" = "6" ] && break
+            echo "not green yet, waiting 15s..."
+            sleep 15
+          done
+
+          echo "production FAILED verification after 6 attempts"
+          exit 1
