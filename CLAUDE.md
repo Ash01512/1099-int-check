@@ -54,9 +54,28 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
 # then repeat each with --env preview
 ```
 
-## Delivery is LIVE (Brevo, since 2026-08-19)
+## Delivery is LIVE but lands in JUNK (Brevo, since 2026-08-19)
 Confirmed by Brevo's own event log: `delivered` to an Outlook address that is
 not the Brevo account address, plus the founder BCC. 0 bounces, 0 spam reports.
+
+**It arrived in the junk folder.** Verified by opening the mailbox, not
+inferred. `delivered` from the provider means the receiving server accepted
+the message; it says nothing about which folder it was filed into, and those
+are different claims.
+
+This is `unaligned_sender: true` behaving exactly as documented. The sender is
+a `@gmail.com` address relayed by Brevo, so DKIM signs for a Brevo subdomain
+and cannot align with `gmail.com`. DMARC alignment fails, `gmail.com` publishes
+`p=none`, and receivers respond by filing it as junk rather than rejecting it.
+
+**The fix is a registered domain — roughly $10-12/yr — and nothing else.** No
+copy change, warm-up, or Brevo setting closes an alignment gap. With a domain:
+onboard it in Brevo, publish the SPF/DKIM records it generates, and point
+`WALKTHROUGH_FROM` at an address on it. `unaligned_sender` then reports `false`
+and the mail authenticates as itself.
+
+Until then the product technically works and practically does not: a reader who
+does not check junk never sees the walkthrough they asked for.
 
 Two traps cost an hour and are not obvious from any status code:
 
