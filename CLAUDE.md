@@ -65,6 +65,13 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
   present — the same duplicate-URL bug that `not_found_handling: "none"`
   prevented on Workers. Verified during the migration: without the file,
   `GET /nope-does-not-exist` returned 200. The workflow checks for 404.
+- **The canonical URL in `public/index.html` is a hardcoded absolute URL.**
+  `https://1099-int-check.pages.dev/`. It is what stops any other hostname
+  serving this same HTML — an old deployment, a preview branch — from competing
+  with production as duplicate content. It silently goes stale the moment the
+  site moves to a custom domain, so update it in the same commit as the move.
+  `og:url` next to it needs the same edit. The deploy workflow asserts the
+  canonical matches the URL it just verified.
 - Secrets do not carry over between the `production` and `preview` Pages
   environments. Setting one and testing the other is a confusing way to see
   `configured:false`.

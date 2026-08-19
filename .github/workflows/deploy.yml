@@ -91,4 +91,14 @@ jobs:
           echo "GET /nonexistent -> $code"
           [ "$code" = "404" ] || fail=1
 
+          # The canonical URL is what stops old or duplicate hostnames serving
+          # this same HTML from competing with the real one. It is a hardcoded
+          # absolute URL, so it silently goes stale the moment the site moves.
+          if curl -s --max-time 30 "$URL/" | grep -q 'rel="canonical" href="'"$URL"'/"'; then
+            echo "canonical matches $URL -> yes"
+          else
+            echo "canonical MISSING or pointing elsewhere -- check public/index.html"
+            fail=1
+          fi
+
           exit $fail
