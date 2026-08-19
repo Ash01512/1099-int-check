@@ -10,7 +10,8 @@
     "deploy": "npm run build && wrangler pages deploy",
     "deploy:redirect": "wrangler deploy -c redirect/wrangler.jsonc",
     "tail": "wrangler pages deployment tail --project-name 1099-int-check",
-    "verify:csp": "node scripts/verify-csp.mjs https://1099-int-check.pages.dev"
+    "verify:csp": "node scripts/verify-csp.mjs https://1099-int-check.pages.dev",
+    "setup:delivery": "node scripts/setup-delivery.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
