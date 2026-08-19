@@ -84,8 +84,12 @@ means every send is rejected while `delivery` still reads true.
   no policy, no grant, no direct write. The publishable key can call that one
   function and nothing else.
 - **The client IP hash is never stored beside an address.** It is passed as an
-  argument, used to bucket the throttle, written to `public.rate_limit_hits`
-  (which holds no email), and purged after two minutes. It used to be a column
+  argument, used to bucket the throttle, written to `private.rate_limit_hits`
+  (which holds no email), and purged after two minutes. That table lives in a
+  **`private` schema on purpose**: PostgREST only exposes the schemas it is
+  configured for, so it has no HTTP surface at all. In `public` it was reachable
+  and protected only by having no RLS policies — which held, but was one
+  accidental policy away from letting anyone clear the throttle. It used to be a column
   on `signups`, which meant a per-visitor identifier sat next to a person's
   address indefinitely to serve a sixty-second window. Do not add it back.
 - A repeat address is absorbed by `ON CONFLICT DO NOTHING` inside the function,

@@ -97,6 +97,41 @@ describe("the built page", () => {
     const html = await readFile(join(root, "dist", "index.html"), "utf8");
     assert.match(html, /:focus-visible\s*{[^}]*outline:/);
   });
+
+  test("every text colour clears WCAG AA against the page ground", async () => {
+    // --signal shipped at #C77400, which is 3.39:1 and fails. It is not
+    // decoration: it colours every link, the countdown, and the numbered rows.
+    // Read the tokens from the built page so this tracks the real values
+    // rather than a copy that can drift.
+    const html = await readFile(join(root, "dist", "index.html"), "utf8");
+    const token = (name) => {
+      const m = html.match(new RegExp(`--${name}\\s*:\\s*(#[0-9A-Fa-f]{6})`));
+      assert.ok(m, `token --${name} not found in the built page`);
+      return m[1];
+    };
+
+    const relativeLuminance = (hex) => {
+      const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+      const [r, g, b] = channels.map((c) =>
+        c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+      );
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a, b) => {
+      const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+
+    const paper = token("paper");
+    for (const name of ["ink", "mute", "signal", "miss", "ok"]) {
+      const value = token(name);
+      const ratio = contrast(value, paper);
+      assert.ok(
+        ratio >= 4.5,
+        `--${name} (${value}) is ${ratio.toFixed(2)}:1 against --paper (${paper}), below the 4.5:1 AA minimum`
+      );
+    }
+  });
 });
 
 describe("the retired-hostname redirect", () => {

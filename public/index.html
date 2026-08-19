@@ -58,7 +58,12 @@
 <style>
   :root{
     --paper:#FAFAF8; --ink:#111111; --mute:#6B6B66;
-    --rule:#D8D8D2; --signal:#C77400; --miss:#A8452F; --ok:#1F6B4A;
+    /* --signal was #C77400, which is 3.39:1 against --paper and fails WCAG AA.
+       It is not decoration: it colours every link, the countdown, and the
+       numbered rows. #A85F00 is the same amber a shade deeper and clears the
+       4.5:1 bar for normal text at 4.67:1. Anything lighter fails — #B06600
+       reaches only 4.23:1 — so do not "brighten it back up". */
+    --rule:#D8D8D2; --signal:#A85F00; --miss:#A8452F; --ok:#1F6B4A;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{

@@ -230,8 +230,9 @@ layer is actually enforcing.
 `ip_hash` is a salted SHA-256 of the client IP, computed server-side. The raw
 address is never sent anywhere, and the hash is **not stored with the email**:
 it is passed as an argument to `public.signup(...)`, recorded in
-`public.rate_limit_hits` — a table containing no addresses — and purged after
-two minutes.
+`private.rate_limit_hits` — a table containing no addresses — and purged after
+two minutes. That table sits in a `private` schema, which PostgREST does not
+expose, so it has no HTTP surface at all.
 
 That separation is the point. It previously lived as a column on `signups`, so
 a per-visitor identifier sat beside a person's email address indefinitely in

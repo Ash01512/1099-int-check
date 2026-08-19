@@ -77,11 +77,11 @@ if (!/^y(es)?$/i.test(go.trim())) {
 rl.close();
 
 /** Run a command with the terminal attached, so wrangler can prompt. */
-function run(label, args) {
+function run(label, command, args) {
   say(`\n${rule}\n  ${label}\n${rule}`);
-  const result = spawnSync("npx", args, { stdio: "inherit", shell: true });
+  const result = spawnSync(command, args, { stdio: "inherit", shell: true });
   if (result.status !== 0) {
-    console.error(`\nFailed: npx ${args.join(" ")}`);
+    console.error(`\nFailed: ${command} ${args.join(" ")}`);
     console.error("Nothing after this point ran. Fix the above and re-run.");
     process.exit(1);
   }
@@ -90,6 +90,7 @@ function run(label, args) {
 const secret = (name) =>
   run(
     `${name} — paste the value at the prompt`,
+    "npx",
     ["wrangler", "pages", "secret", "put", name, "--project-name", PROJECT, "--env", "production"]
   );
 
@@ -112,7 +113,7 @@ secret("FOUNDER_BCC");
 
 // Not optional. Cloudflare documents that on Pages, secrets "need to be done
 // before a deployment that uses those secrets".
-run("Deploying, so the new secrets take effect", ["--yes", "--", "npm", "run", "deploy"]);
+run("Deploying, so the new secrets take effect", "npm", ["run", "deploy"]);
 
 say(`\n${rule}\n  Checking what the site now reports\n${rule}\n`);
 
