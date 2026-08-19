@@ -67,14 +67,32 @@ single visitor no matter what you set. Use brevo instead.
 `);
 }
 
+// This script cannot run unattended, and should say so rather than appear to
+// hang. wrangler reads each secret from an interactive prompt, so with stdin
+// closed — CI, a pipe, a non-interactive shell — the questions below never
+// resolve and Node exits on an unsettled await with no explanation.
+if (!stdin.isTTY) {
+  console.error(`
+This needs an interactive terminal.
+
+Each value is typed into wrangler's own prompt, so it is never passed as an
+argument, written to a file, or kept in shell history. That is deliberate, and
+it means the script cannot be run from a pipe or a CI job.
+
+Open a terminal in this folder and run:
+
+  npm run setup:delivery
+`);
+  process.exit(2);
+}
+
 const rl = createInterface({ input: stdin, output: stdout });
 const go = await rl.question("Ready to set the secrets? [y/N] ");
-if (!/^y(es)?$/i.test(go.trim())) {
+rl.close();
+if (!/^y(es)?$/i.test((go || "").trim())) {
   say("\nNothing changed. Re-run when you have the sender address and key.");
-  rl.close();
   process.exit(0);
 }
-rl.close();
 
 /** Run a command with the terminal attached, so wrangler can prompt. */
 function run(label, command, args) {
