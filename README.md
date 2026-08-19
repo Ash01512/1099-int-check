@@ -145,6 +145,7 @@ Anything without a `src` parameter is recorded as `direct`.
 │   └── index.js        server: security headers + POST /api/signup
 ├── scripts/
 │   └── build.mjs       composes dist/ from public/ + src/index.js
+├── redirect/           retired workers.dev hostname; 301s to the real site
 ├── dist/               generated, gitignored, never edited by hand
 ├── wrangler.jsonc      Pages project config
 └── package.json

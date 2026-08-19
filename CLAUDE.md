@@ -85,10 +85,24 @@ cp .dev.vars.example .dev.vars   # then paste the publishable key
 npm run dev                      # builds dist/, then wrangler pages dev
 ```
 
+## The retired hostname
+`1099-int-check.ashabbas-2023.workers.dev` was the production URL until
+2026-08-19. It is still live, and it is now a **redirect only** — see
+`redirect/`, a separate Worker deployed with `cd redirect && npx wrangler
+deploy`. It is not part of the Pages build and CI does not touch it.
+
+It answers `301` to GET/HEAD and `308` to everything else, preserving path and
+query so shared `?src=` links keep working. Redeploy it only if the production
+URL changes; the target is hardcoded in `redirect/index.js`.
+
+**It must never regain the Supabase binding.** Two deployments writing to
+`public.signups` would split the mailing list across them with no error
+anywhere. The old secrets are still attached to that Worker but unreachable,
+since the redirect code never reads `env`.
+
 ## History
-Migrated from Cloudflare Workers to Pages on 2026-08-19. The Workers deployment
-at `1099-int-check.ashabbas-2023.workers.dev` and two orphaned duplicates
-(`1099-int-tax`, `1099-int-checkk`, both live and both misconfigured) were part
-of that cleanup. Note that Cloudflare positions Workers as the successor to
-Pages and documents only the Pages → Workers direction; this project went the
-other way deliberately.
+Migrated from Cloudflare Workers to Pages on 2026-08-19. Two orphaned
+duplicates (`1099-int-tax`, `1099-int-checkk`, both live and both
+misconfigured) were deleted in the same pass. Note that Cloudflare positions
+Workers as the successor to Pages and documents only the Pages → Workers
+direction; this project went the other way deliberately.
