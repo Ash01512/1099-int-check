@@ -244,17 +244,27 @@ its own file and switching to a hash or nonce would close it.
 - No bank logins and no credentials are ever requested.
 - No documents are uploaded. Readers pull their own transcript from IRS.gov and
   keep it. No transcript, and no tax figure, ever reaches this system.
-- The only data collected is the email address typed into the form, plus the
-  `?src=` value from the link, the page name, and the browser's user-agent
-  string. It is stored in a Supabase Postgres database **you control**, not
-  with a third-party form provider.
+- The data collected is the email address typed into the form, plus the
+  `?src=` value from the link, the page name, the browser's user-agent
+  string, and a salted SHA-256 hash of the client IP used for rate limiting.
+  It is stored in a Supabase Postgres database **you control**, not with a
+  third-party form provider.
+- `IP_HASH_SALT` must be set as a secret. SHA-256 is fast and the IPv4 space
+  is 2^32, so with a known salt every stored hash can be brute-forced back to
+  an address. This repository is public, so the fallback salt in `src/index.js`
+  is a *published* salt and provides no protection at all. `GET /api/status`
+  reports `ip_salt_set`, and the Worker logs an explicit error when it is
+  missing. This was a real defect, not a hypothetical: the salt was unset in
+  production and a stored `ip_hash` was reproduced exactly from the public
+  repo plus the client address.
 - Because that data lives in your project, you are its custodian. Storing an
   email address is a much smaller obligation than storing tax documents, but it
   is not nothing — decide your retention period and honour deletion requests.
 - The collected list is not readable through the public API. See
   [Write-only from the internet](#write-only-from-the-internet).
-- A hidden honeypot field catches bots; a filled honeypot is answered `200` and
-  silently discarded, so the bot gets no signal that it was rejected.
+- A hidden honeypot field catches bots; a filled honeypot is answered `201`,
+  identically to a real signup, and silently discarded, so the bot gets no
+  signal that it was rejected.
 
 ## Countdown
 

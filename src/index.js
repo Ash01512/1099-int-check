@@ -130,6 +130,10 @@ you know about, reply to this email and tell me what happened. I read every
 one.
 
 Not a tax preparer. Not tax advice.
+
+--
+You are receiving this because you asked for it at 1099-int-check.pages.dev.
+Reply with "remove" and I will delete your address from the list.
 `
 
 const WALKTHROUGH_SUBJECT = "Find the 1099-INT you forgot, before Oct 15";
@@ -215,12 +219,34 @@ function isConfigured(env) {
  *
  * The database rate limit needs to group requests by client, but storing raw
  * addresses alongside email addresses is more personal data than this page has
- * any reason to hold. A salted hash groups correctly and cannot be reversed to
- * an address. The salt is per-deployment; rotating it resets the buckets,
- * which is harmless for a 60-second window.
+ * any reason to hold. A salted hash groups correctly without holding the
+ * address itself.
+ *
+ * THE SALT IS THE WHOLE PROTECTION, AND IT MUST BE SECRET. SHA-256 is fast and
+ * the IPv4 space is only 2^32, so with a known salt every hash in the table can
+ * be reversed to an address by exhausting that space on a GPU in minutes. This
+ * file is public, so a hardcoded default salt is a published salt.
+ *
+ * That is not hypothetical. It shipped: IP_HASH_SALT was never set, the literal
+ * fallback below was in use in production, and a stored ip_hash was reproduced
+ * exactly from the public repo plus the client address. Hence the loud warning
+ * rather than a quiet `||` default — the previous code made an unset salt
+ * indistinguishable from a set one.
+ *
+ * Rotating the salt resets the rate-limit buckets, which is harmless over a
+ * 60-second window, and makes previously stored hashes unlinkable to new ones.
  */
+const FALLBACK_IP_SALT = "1099-int-check";
+
 async function hashIp(ip, salt) {
-  const data = new TextEncoder().encode(`${salt || "1099-int-check"}:${ip}`);
+  if (!salt) {
+    console.error(
+      "IP_HASH_SALT is unset. ip_hash values are computed with the salt published " +
+      "in this repository and can be brute-forced back to client IP addresses. " +
+      "Set it: wrangler pages secret put IP_HASH_SALT"
+    );
+  }
+  const data = new TextEncoder().encode(`${salt || FALLBACK_IP_SALT}:${ip}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -494,6 +520,10 @@ export default {
         // is why it is a legitimate choice — but "reaches everyone's spam
         // folder" must not be reported as healthy delivery.
         unaligned_sender: FREE_MAILBOX_DOMAINS.has(senderDomain(env)),
+        // False means ip_hash is computed with the salt published in this
+        // public repo and is reversible to a client IP. Reported rather than
+        // hidden: this was true in production and nothing surfaced it.
+        ip_salt_set: Boolean(env.IP_HASH_SALT),
       });
     }
 
