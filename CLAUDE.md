@@ -43,14 +43,27 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
 # then repeat each with --env preview
 ```
 
-## Delivery is NOT finished — see GOING-LIVE.md
-The walkthrough cannot reach anyone but the Resend account owner, and no
-configuration fixes it. Resend verifies a sending domain via SPF/DKIM/MX
-records in that domain's DNS zone, and `pages.dev` is a zone Cloudflare owns —
-there is no way to publish records under it. **Automated delivery to real
-visitors requires registering a domain.** `GET /api/status` reports
-`sandbox:true` separately from `delivery` so a sandbox send is never mistaken
-for working delivery. Full runbook in `GOING-LIVE.md`.
+## Delivery — see GOING-LIVE.md
+Two providers are supported, chosen by whichever key is set (or pinned with
+`WALKTHROUGH_PROVIDER`):
+- **Brevo** verifies a single sender ADDRESS by emailing it a link. No domain,
+  so it works on `pages.dev` and reaches real visitors. ~300/day free. Mail
+  sent as a personal mailbox address cannot be DKIM-aligned, so much of it is
+  filtered to spam — reported as `unaligned_sender:true`. This trade was
+  accepted deliberately.
+- **Resend** verifies a DOMAIN via SPF/DKIM/MX records in that domain's DNS
+  zone. `pages.dev` is a zone Cloudflare owns, so this is impossible until a
+  domain is registered; until then Resend reaches only the account owner,
+  reported as `sandbox:true`.
+
+`GET /api/status` deliberately reports `delivery`, `sandbox` and
+`unaligned_sender` as **separate** fields. `delivery:true` only means a key and
+a sender exist — it has never meant a visitor receives anything. Collapsing
+them is how this project previously shipped a walkthrough that was reported
+sent and never arrived.
+
+`WALKTHROUGH_FROM` is intentionally empty in `wrangler.jsonc`. A wrong value
+means every send is rejected while `delivery` still reads true.
 
 ## Backend
 - Supabase project `dorpekyszdlhvcozuocj` (ap-south-1), table `public.signups`

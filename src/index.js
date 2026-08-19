@@ -132,6 +132,59 @@ one.
 Not a tax preparer. Not tax advice.
 `
 
+const WALKTHROUGH_SUBJECT = "Find the 1099-INT you forgot, before Oct 15";
+
+// Domains whose mail is sent by a mailbox provider, not by us. A third-party
+// sender can never produce a DKIM signature that aligns with these, so DMARC
+// alignment fails and a large share of the mail is filtered. Sending from one
+// is a deliberate trade, not a mistake, but /api/status must say so out loud
+// rather than report healthy delivery that mostly lands in spam.
+const FREE_MAILBOX_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+  "yahoo.com", "ymail.com", "icloud.com", "me.com", "aol.com", "proton.me",
+  "protonmail.com", "gmx.com", "mail.com", "yandex.com", "zoho.com",
+]);
+
+function senderDomain(env) {
+  const from = String(env.WALKTHROUGH_FROM || "");
+  const at = from.lastIndexOf("@");
+  return at === -1 ? "" : from.slice(at + 1).toLowerCase();
+}
+
+/**
+ * Which provider actually sends.
+ *
+ * Two exist because they solve different problems. Resend requires a verified
+ * DOMAIN, which needs DNS records in a zone you control — impossible on
+ * pages.dev, so it can only reach the account owner there. Brevo verifies a
+ * single ADDRESS by emailing it a confirmation, which needs no domain and can
+ * therefore reach real visitors today.
+ *
+ * WALKTHROUGH_PROVIDER pins the choice. Without it the provider is inferred
+ * from whichever key exists, because a single configured key is unambiguous.
+ */
+function deliveryProvider(env) {
+  const pinned = String(env.WALKTHROUGH_PROVIDER || "").toLowerCase();
+  if (pinned === "brevo" || pinned === "resend") return pinned;
+
+  const hasResend = Boolean(env.RESEND_API_KEY);
+  const hasBrevo = Boolean(env.BREVO_API_KEY);
+
+  if (hasResend && hasBrevo) {
+    // Guessing here would mean the sender silently changes when a key is
+    // added, which is the kind of invisible switch that makes a delivery bug
+    // take a day to find.
+    console.error(
+      "BOTH RESEND_API_KEY and BREVO_API_KEY are set and WALKTHROUGH_PROVIDER is unset. " +
+      "Using brevo. Set WALKTHROUGH_PROVIDER or delete the unused key."
+    );
+    return "brevo";
+  }
+  if (hasBrevo) return "brevo";
+  if (hasResend) return "resend";
+  return null;
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function json(body, status = 200, extra = {}) {
@@ -205,52 +258,84 @@ function originAllowed(request) {
  * worse than a late email, and the address is the whole point of the page.
  */
 async function sendWalkthrough(env, email) {
-  if (!env.RESEND_API_KEY || !env.WALKTHROUGH_FROM) {
-    console.error("WALKTHROUGH NOT SENT - delivery unconfigured (RESEND_API_KEY / WALKTHROUGH_FROM)");
+  const provider = deliveryProvider(env);
+  if (!provider || !env.WALKTHROUGH_FROM) {
+    console.error(
+      "WALKTHROUGH NOT SENT - delivery unconfigured " +
+      "(need BREVO_API_KEY or RESEND_API_KEY, plus WALKTHROUGH_FROM)"
+    );
     return { ok: false, reason: "unconfigured" };
   }
 
-  const body = {
-    from: env.WALKTHROUGH_FROM,
-    to: [email],
-    subject: "Find the 1099-INT you forgot, before Oct 15",
-    text: WALKTHROUGH_TEXT,
-  };
-  // A blind copy to the founder makes the inbox the delivery log: you see
-  // exactly what every reader sees, with no extra infrastructure.
-  if (env.FOUNDER_BCC) body.bcc = [env.FOUNDER_BCC];
-  // The email asks people to reply. Without reply_to those replies vanish,
+  // The email asks people to reply. Without a reply-to those replies vanish,
   // killing the only support channel and the only engagement signal.
   const replyTo = env.WALKTHROUGH_REPLY_TO || env.FOUNDER_BCC;
-  if (replyTo) body.reply_to = replyTo;
+
+  let url;
+  let headers;
+  let body;
+
+  if (provider === "brevo") {
+    url = "https://api.brevo.com/v3/smtp/email";
+    headers = { "api-key": env.BREVO_API_KEY, accept: "application/json" };
+    body = {
+      // Brevo wants a display name. Without one, clients show the raw address,
+      // which for a personal mailbox sender looks like a stranger's mail.
+      sender: { email: env.WALKTHROUGH_FROM, name: env.WALKTHROUGH_FROM_NAME || "1099-INT Check" },
+      to: [{ email }],
+      subject: WALKTHROUGH_SUBJECT,
+      textContent: WALKTHROUGH_TEXT,
+    };
+    // A blind copy to the founder makes the inbox the delivery log: you see
+    // exactly what every reader sees, with no extra infrastructure.
+    if (env.FOUNDER_BCC) body.bcc = [{ email: env.FOUNDER_BCC }];
+    if (replyTo) body.replyTo = { email: replyTo };
+    // NOTE: Brevo has no idempotency header. Resend's Idempotency-Key below is
+    // what stops a repeat signup re-sending, so on Brevo a resubmitted address
+    // does get the mail twice. That is accepted rather than fixed by skipping
+    // the send on a duplicate: a response that differed for an already-stored
+    // address would let anyone test whether a given person is on the list,
+    // which for this audience is the more serious leak of the two.
+  } else {
+    url = "https://api.resend.com/emails";
+    headers = {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      // A repeat signup returns 409 and still reaches this send. Without
+      // this, re-submitting an address re-sends the email every time.
+      "Idempotency-Key": `walkthrough:${email}`,
+    };
+    body = {
+      from: env.WALKTHROUGH_FROM,
+      to: [email],
+      subject: WALKTHROUGH_SUBJECT,
+      text: WALKTHROUGH_TEXT,
+    };
+    if (env.FOUNDER_BCC) body.bcc = [env.FOUNDER_BCC];
+    if (replyTo) body.reply_to = replyTo;
+  }
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await fetch(url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-        // A repeat signup returns 409 and still reaches this send. Without
-        // this, re-submitting an address re-sends the email every time.
-        "Idempotency-Key": `walkthrough:${email}`,
-      },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       // Workers fetch has no default timeout. A hung connection would block
       // the signup response, because the send is awaited before replying.
       signal: AbortSignal.timeout(10000),
     });
-    if (res.ok) return { ok: true };
+    if (res.ok) return { ok: true, provider };
     // Log the provider's own words. A silent send failure is the exact
     // class of bug this project keeps finding.
     const detail = await res.text().catch(() => "");
-    console.error("WALKTHROUGH SEND FAILED", res.status, detail.slice(0, 300));
+    console.error("WALKTHROUGH SEND FAILED", provider, res.status, detail.slice(0, 300));
     // Surface the provider status so a failed send is diagnosable without
-    // log access. 401 means a bad key; 403 means the sandbox refused a
-    // recipient that is not the account owner. Different fixes entirely.
-    return { ok: false, reason: "provider_error", status: res.status };
+    // log access. 401 is a bad key. On Resend, 403 is the sandbox refusing a
+    // recipient who is not the account owner. On Brevo, 400 usually means the
+    // sender address has not been verified yet. Different fixes entirely.
+    return { ok: false, reason: "provider_error", status: res.status, provider };
   } catch (err) {
-    console.error("WALKTHROUGH SEND THREW", (err && err.message) || String(err));
-    return { ok: false, reason: "unreachable" };
+    console.error("WALKTHROUGH SEND THREW", provider, (err && err.message) || String(err));
+    return { ok: false, reason: "unreachable", provider };
   }
 }
 
@@ -391,13 +476,24 @@ export default {
     // Lets the page discover a broken backend on load, instead of only after
     // a visitor has typed an address and pressed the button.
     if (pathname === "/api/status") {
+      const provider = deliveryProvider(env);
       return json({
         ok: true,
         configured: isConfigured(env),
-        delivery: Boolean(env.RESEND_API_KEY && env.WALKTHROUGH_FROM),
+        // A key and a sender exist. On its own this says nothing about whether
+        // a stranger can receive anything — the two flags below are what
+        // decide that, and they are reported separately for that reason.
+        delivery: Boolean(provider && env.WALKTHROUGH_FROM),
+        provider,
         // Resend's sandbox sender can only reach the account owner. Reporting
         // delivery:true from it would claim reach this cannot deliver.
-        sandbox: String(env.WALKTHROUGH_FROM || "").includes("resend.dev"),
+        sandbox: provider === "resend" && String(env.WALKTHROUGH_FROM || "").includes("resend.dev"),
+        // Sending as a personal mailbox address through a third party cannot
+        // produce a DKIM signature aligned with that domain, so DMARC fails
+        // and much of the mail is filtered. It still reaches everyone, which
+        // is why it is a legitimate choice — but "reaches everyone's spam
+        // folder" must not be reported as healthy delivery.
+        unaligned_sender: FREE_MAILBOX_DOMAINS.has(senderDomain(env)),
       });
     }
 

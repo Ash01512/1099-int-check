@@ -25,19 +25,40 @@
   "vars": {
     "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co",
 
-    // Walkthrough delivery. RESEND_API_KEY is a secret, set separately:
-    //   npx wrangler pages secret put RESEND_API_KEY
+    // ---- Walkthrough delivery -------------------------------------------
     //
-    // WALKTHROUGH_FROM must be an address on a DOMAIN YOU HAVE VERIFIED in
-    // Resend. Until a domain is verified, Resend only permits sending from
-    // onboarding@resend.dev and only TO the address you signed up with. That
-    // sandbox is fine for reading the email yourself; it cannot reach a single
-    // real reader. /api/status reports sandbox:true so this is never mistaken
-    // for working delivery.
-    "WALKTHROUGH_FROM": "onboarding@resend.dev",
+    // Two providers are supported because they need different things, and
+    // this site can only satisfy one of them.
+    //
+    //   brevo   verifies a single ADDRESS, by emailing it a confirmation
+    //           link. No domain needed, so it works on pages.dev and can
+    //           reach real visitors today. Free tier is ~300 emails/day.
+    //             npx wrangler pages secret put BREVO_API_KEY --project-name 1099-int-check --env production
+    //
+    //   resend  verifies a DOMAIN, via SPF/DKIM/MX records in that domain's
+    //           DNS zone. pages.dev is Cloudflare's zone, so this is
+    //           impossible here until a domain is registered. Until then
+    //           Resend sends only from onboarding@resend.dev and only TO the
+    //           account owner — /api/status reports sandbox:true so that is
+    //           never mistaken for working delivery. See GOING-LIVE.md.
+    //
+    // The provider is inferred from whichever key is set. Pin it explicitly
+    // with WALKTHROUGH_PROVIDER ("brevo" or "resend") if both ever exist.
+    //
+    // WALKTHROUGH_FROM is intentionally EMPTY. It has no safe default: a
+    // wrong address here means the provider rejects every send with a 400
+    // while /api/status still reports delivery:true, which is precisely the
+    // "looks configured, delivers nothing" failure this project keeps
+    // hitting. Set it to the address you actually verified.
+    "WALKTHROUGH_FROM": "",
+
+    // Shown as the sender name. Without it, clients display the bare address,
+    // which from a personal mailbox reads like mail from a stranger.
+    "WALKTHROUGH_FROM_NAME": "1099-INT Check",
 
     // Optional. A blind copy of every walkthrough, so your inbox is the
-    // delivery log and you see exactly what each reader sees.
+    // delivery log and you see exactly what each reader sees. Also used as
+    // the reply-to, because the email asks people to reply.
     "FOUNDER_BCC": ""
   }
 

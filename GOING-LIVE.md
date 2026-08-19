@@ -1,112 +1,143 @@
 # Going live: automated walkthrough delivery
 
-The site is live and correct at https://1099-int-check.pages.dev. Signups are
-captured. The one thing that does not work is **sending the walkthrough to
-anyone other than the account owner**, and this file is the exact path to
-fixing that.
+The site is live at https://1099-int-check.pages.dev and signups are captured.
+This file is the path to actually sending the walkthrough.
 
-## Why a domain is required, and not optional
+There are two routes. They differ in one thing that matters: whether the mail
+lands in the inbox or the spam folder.
 
-Resend — like every sending provider — verifies a domain by having you publish
-`SPF (TXT)`, `DKIM (TXT)`, and `MX` records in that domain's DNS zone, plus
-`DMARC (TXT)` afterwards. You can only publish records in a zone you control.
+---
 
-`pages.dev` is a zone **Cloudflare owns**:
+## Route A — Brevo, works today, no domain needed
+
+**Chosen route.** Reaches every visitor, automated, free. Much of it will be
+filtered to spam, and that was accepted deliberately — see "The honest caveat"
+below before relying on it.
+
+### Step 1 — you: create a Brevo account and verify one sender address
+
+<https://www.brevo.com> → sign up → **Senders, Domains & Dedicated IPs** →
+**Senders** → **Add a sender**.
+
+Enter the address you want the walkthrough to come from. Brevo emails it a
+confirmation link. Click it. That is the whole verification — no DNS, no
+domain, which is exactly why this route works on `pages.dev`.
+
+Free plan is roughly **300 emails/day**. Worth knowing before a link gets
+posted somewhere busy.
+
+### Step 2 — you: create an API key and set it
+
+Brevo → **SMTP & API** → **API Keys** → **Generate a new API key**.
+
+**Do not paste the key into a chat or a file.** Set it directly, so it goes
+from your clipboard to Cloudflare and nowhere else:
+
+```bash
+npx wrangler pages secret put BREVO_API_KEY --project-name 1099-int-check --env production
+npx wrangler pages secret put BREVO_API_KEY --project-name 1099-int-check --env preview
+```
+
+Both environments — a secret set on one is invisible to the other.
+
+### Step 3 — set the sender address
+
+`WALKTHROUGH_FROM` in `wrangler.jsonc` is deliberately empty. It has no safe
+default: a wrong address means Brevo rejects every send with a 400 while the
+status endpoint still reports `delivery:true`. Set it to **the exact address
+you verified in step 1**, and set `FOUNDER_BCC` to your own address so your
+inbox becomes the delivery log.
+
+```jsonc
+"WALKTHROUGH_FROM": "you@example.com",
+"FOUNDER_BCC": "you@example.com"
+```
+
+Commit and push; CI deploys on merge to `main`.
+
+### Step 4 — prove it
+
+```bash
+curl -s https://1099-int-check.pages.dev/api/status
+```
+
+Expect `"delivery":true`, `"provider":"brevo"`, `"sandbox":false`.
+
+`"unaligned_sender":true` is expected on this route and is not an error — it
+is the spam-risk flag, reported so healthy-looking delivery is never confused
+with mail that actually lands.
+
+Then the only proof that counts: sign up with an address **you do not own and
+that is unrelated to the Brevo account**, and confirm the walkthrough arrives.
+Check spam. Anything less tests the plumbing, not the delivery.
+
+### The honest caveat
+
+The mail is sent by Brevo but claims to be from your address. If that address
+is a personal mailbox (`@gmail.com` and similar), Brevo cannot produce a DKIM
+signature that aligns with it, so DMARC alignment fails and mailbox providers
+filter a large share of it. `/api/status` reports this as
+`unaligned_sender:true`.
+
+It still reaches everyone, which is why it is a legitimate choice. It reaches
+many of them in spam. The page already tells people to check their spam
+folder, so the promise stays honest either way.
+
+---
+
+## Route B — a registered domain, mail that lands in the inbox
+
+The only way to make the mail properly authenticated. Costs ~$10–12/yr.
+
+Resend (or Brevo) verifies a domain by having you publish `SPF (TXT)`,
+`DKIM (TXT)` and `MX` records in that domain's DNS zone, plus `DMARC` after.
+You can only publish records in a zone you control, and `pages.dev` is a zone
+**Cloudflare owns**:
 
 ```
 pages.dev                 NS   adi.ns.cloudflare.com, karl.ns.cloudflare.com
 1099-int-check.pages.dev  NS   ray.ns.cloudflare.com, reza.ns.cloudflare.com
 ```
 
-There is no mechanism — in Pages, in Wrangler, or in the dashboard — to add a
-TXT or MX record under it. So `1099-int-check.pages.dev` can serve a website
-but can never be an email identity. This is the cost of the free hostname, and
-no amount of configuration works around it.
+No mechanism exists to add a record under it. That hostname can serve a
+website; it can never be an email identity. This is the cost of the free
+hostname, and no configuration works around it.
 
-Until a domain is verified, Resend permits sending only from
-`onboarding@resend.dev`, and only **to the address the Resend account was
-registered with**. `GET /api/status` reports this as `sandbox:true`, separately
-from `delivery`, precisely so a sandbox send is never mistaken for working
-delivery.
+1. **You:** Cloudflare dashboard → **Domain Registration** → register a domain.
+   Bought there, it lands in your account with DNS already active.
+2. **You:** add the domain in Brevo or Resend.
+3. **Me:** add the SPF/DKIM/MX records to the Cloudflare zone, exactly as
+   generated.
+4. **You:** click Verify.
+5. **Me:** point `WALKTHROUGH_FROM` at an address on that domain and redeploy.
+   `unaligned_sender` becomes `false` and the mail starts reaching inboxes.
+6. **Me:** move the site onto the domain too — Pages custom domain, then
+   update `rel="canonical"` and `og:url` in `public/index.html`, `URL` in
+   `.github/workflows/deploy.yml`, `TARGET` in `redirect/index.js`, and the
+   production URL in `CLAUDE.md` / `README.md`.
 
-## Step 1 — you: register a domain (~5 minutes, ~$10–12/yr)
+---
 
-Cloudflare Registrar sells at wholesale cost with no markup, and a domain
-bought there lands in your Cloudflare account with DNS already active, which
-skips a nameserver migration entirely.
+## What the status flags mean
 
-Cloudflare dashboard → **Domain Registration** → **Register Domains**.
+`GET /api/status` reports four separate things, because collapsing them is how
+a site ends up claiming delivery it does not have:
 
-Prefer a `.com` for a site about taxes; trust matters more than cleverness here.
+| Flag | Meaning |
+|---|---|
+| `configured` | Supabase is wired. Signups are being stored. |
+| `delivery` | A provider key and a sender address exist. **Says nothing about reach.** |
+| `sandbox` | Resend with no verified domain: can only reach the account owner. |
+| `unaligned_sender` | Sending as a personal mailbox: reaches everyone, much of it filtered. |
 
-## Step 2 — you: get a Resend API key
+`delivery:true` on its own has never meant a visitor receives anything. That
+distinction is the whole reason these are four fields and not one.
 
-Resend dashboard → **API Keys** → **Create API Key**, sending permission.
+## Until a provider key is set
 
-It cannot be created programmatically: the Resend API requires an existing API
-key to create a new one, so this step needs a human with the dashboard open.
-
-**Do not paste the key into a chat or a file.** Set it directly — Cloudflare
-never reveals it again, which is the point:
-
-```bash
-npx wrangler pages secret put RESEND_API_KEY --project-name 1099-int-check --env production
-npx wrangler pages secret put RESEND_API_KEY --project-name 1099-int-check --env preview
-```
-
-Both environments. A secret set on one is invisible to the other.
-
-## Step 3 — me: DNS records
-
-Once the domain is in your Cloudflare account, add it in Resend
-(**Domains → Add Domain**), and I add the SPF/DKIM/MX records Resend generates
-to the Cloudflare zone. They must be copied exactly; a single wrong character
-fails verification with no useful error.
-
-## Step 4 — you: click Verify in Resend
-
-Propagation is usually under a minute on Cloudflare DNS. Resend re-checks on
-demand.
-
-## Step 5 — me: switch the sender and prove it
-
-```jsonc
-// wrangler.jsonc
-"WALKTHROUGH_FROM": "hello@yourdomain.com",   // must be ON the verified domain
-"FOUNDER_BCC": "ashabbas.2023@gmail.com"      // optional: inbox as delivery log
-```
-
-Then deploy and confirm `GET /api/status` returns:
-
-```json
-{"ok":true,"configured":true,"delivery":true,"sandbox":false}
-```
-
-`sandbox:false` is the assertion that matters. `delivery:true` alone only means
-a key is present; it does not mean a stranger can receive anything.
-
-Proof of the real thing is an end-to-end signup with an address **unrelated to
-the Resend account**, confirming the walkthrough lands. Anything less tests the
-sandbox and proves nothing about visitors.
-
-## Step 6 — me: move the site onto the domain too
-
-Worth doing in the same pass, since the site should live where the email comes
-from:
-
-- Pages → custom domain (free on the free plan, once the zone is in the account)
-- `public/index.html`: update `rel="canonical"` **and** `og:url`
-- `.github/workflows/deploy.yml`: update `URL`
-- `redirect/index.js`: update `TARGET`, so the old workers.dev hostname points
-  at the new home rather than at pages.dev
-- `CLAUDE.md` and `README.md`: production URL
-
-## Until then
-
-Delivery stays off, and that is handled honestly rather than hidden: a visitor
-is recorded in Supabase and sees *"You're on the list. I'll send the
-walkthrough shortly."* No promise is made that the software does not keep. If
-that interim runs for long, send manually from the captured list:
+Delivery stays off and is handled honestly: a visitor is recorded in Supabase
+and sees *"You're on the list. I'll send the walkthrough shortly."* Nothing
+promises what the software cannot do. To send manually from the captured list:
 
 ```sql
 select email, source, created_at
