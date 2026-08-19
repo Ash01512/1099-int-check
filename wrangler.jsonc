@@ -1,37 +1,32 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "1099-int-check",
-  "main": "src/index.js",
-  "compatibility_date": "2026-08-17",
+  "compatibility_date": "2026-08-19",
 
-  // Static assets are served by the runtime; the Worker in src/index.js
-  // wraps them to attach security headers and handles POST /api/signup.
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS",
-    // This is a one-page site, not an SPA. With single-page-application
-    // every unknown path returned the landing page with a 200, so
-    // crawlers would see unlimited duplicate URLs. "none" lets unknown
-    // paths 404 honestly.
-    "not_found_handling": "none",
-
-    // Without this, matching assets are served straight from the asset
-    // store and the Worker never runs — which silently drops every
-    // security header on the page itself. Verified: with this false,
-    // GET / returns no CSP at all.
-    "run_worker_first": true
-  },
+  // Cloudflare Pages deploys one directory. `npm run build` composes it from
+  // public/ (static) and src/index.js (server, copied in as _worker.js).
+  // dist/ is generated — never edit it, never commit it.
+  //
+  // This is "advanced mode": because _worker.js exists at the root of the
+  // build output, Pages routes EVERY request through it first and the script
+  // reaches for static files itself via env.ASSETS.fetch(). That ordering is
+  // the Pages default and it is what replaces the Workers-only
+  // `assets.run_worker_first` flag: without worker-first ordering the page
+  // ships with no security headers at all, which is silent and was verified
+  // in production. Do not add a _routes.json excluding "/" — that would put
+  // the asset server back in front and drop the headers again.
+  "pages_build_output_dir": "./dist",
 
   // The project URL is not a secret; it ships in every Supabase client.
   // SUPABASE_PUBLISHABLE_KEY is set as a secret instead, so a public repo
   // does not hand strangers a way to POST straight into the table and
   // bypass this Worker's validation and honeypot:
-  //   npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+  //   npx wrangler pages secret put SUPABASE_PUBLISHABLE_KEY
   "vars": {
     "SUPABASE_URL": "https://dorpekyszdlhvcozuocj.supabase.co",
 
     // Walkthrough delivery. RESEND_API_KEY is a secret, set separately:
-    //   npx wrangler secret put RESEND_API_KEY
+    //   npx wrangler pages secret put RESEND_API_KEY
     //
     // WALKTHROUGH_FROM must be an address on a DOMAIN YOU HAVE VERIFIED in
     // Resend. Until a domain is verified, Resend only permits sending from
@@ -44,21 +39,30 @@
     // Optional. A blind copy of every walkthrough, so your inbox is the
     // delivery log and you see exactly what each reader sees.
     "FOUNDER_BCC": ""
-  },
-
-  // Per-IP throttle on /api/signup. Without this the endpoint is an open
-  // write into the database: the honeypot stops naive bots, but nothing
-  // stopped a script from filling the table. 5 per minute is generous for
-  // a human and useless for a flood.
-  "ratelimits": [
-    {
-      "name": "SIGNUP_LIMITER",
-      "namespace_id": "1001",
-      "simple": { "limit": 5, "period": 60 }
-    }
-  ],
-
-  "observability": {
-    "enabled": true
   }
+
+  // NOT PRESENT, and deliberately so — these are Workers-only keys that
+  // Pages silently ignores rather than rejects:
+  //
+  //   "ratelimits"    The SIGNUP_LIMITER binding. Pages Functions cannot bind
+  //                   the rate limiter at all, so /api/signup no longer gets
+  //                   an edge throttle. The limit that actually held was
+  //                   always the Postgres trigger — Cloudflare documents the
+  //                   edge binding as permissive and eventually consistent,
+  //                   and it let 14 of 14 rapid writes through a 5/60 limit
+  //                   in production. The database still enforces. src/index.js
+  //                   logs on every signup that the binding is absent, which
+  //                   is noisy on purpose: it should not be possible to forget
+  //                   that a layer was removed.
+  //
+  //   "not_found_handling"  Pages has no equivalent knob. Unknown paths fall
+  //                   through env.ASSETS.fetch() to Pages' own 404, which is
+  //                   what "none" gave us. There is no 404.html in public/,
+  //                   and adding an index.html fallback would resurrect the
+  //                   old bug where every unknown path returned the landing
+  //                   page with a 200.
+  //
+  //   "observability" Workers-only. Pages logs live under the project's
+  //                   Functions tab; `npx wrangler pages deployment tail`
+  //                   replaces `wrangler tail`.
 }

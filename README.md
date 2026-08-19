@@ -3,7 +3,7 @@
 A one-page site for people who filed a tax extension and want to check their
 1099-INT interest forms against the IRS record before they file.
 
-Deployed as a Cloudflare Worker serving a single static page.
+Deployed on Cloudflare Pages, serving a single static page.
 
 ---
 
@@ -79,13 +79,16 @@ connection. Never from the browser.
 | Name | Where | Why |
 |---|---|---|
 | `SUPABASE_URL` | `vars` in `wrangler.jsonc` | Not a secret; ships in every Supabase client. |
-| `SUPABASE_PUBLISHABLE_KEY` | Worker secret | Kept out of a public repo so strangers cannot POST straight into the table. |
+| `SUPABASE_PUBLISHABLE_KEY` | Pages secret | Kept out of a public repo so strangers cannot POST straight into the table. |
 
 ```bash
-npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+npx wrangler pages secret put SUPABASE_PUBLISHABLE_KEY --project-name 1099-int-check --env production
 ```
 
-If either binding is missing the Worker answers `503 not_configured` and the page
+Pages keeps `production` and `preview` secrets separate, so run it again with
+`--env preview` if you want branch deploys to work.
+
+If either binding is missing the server answers `503 not_configured` and the page
 disables the input and shows a visible warning. That is deliberate: a form that
 accepts an address and drops it is worse than one that admits it is not wired up,
 because the silence reads as "nobody was interested" when nobody was recorded.
@@ -95,21 +98,30 @@ because the silence reads as "nobody was interested" when nobody was recorded.
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # then paste your publishable key
-npm run dev                      # http://localhost:8787
+npm run dev                      # builds dist/, then serves it
 ```
 
-`.dev.vars` is gitignored.
+`.dev.vars` is gitignored. `wrangler pages dev` serves the built `dist/`
+directory and does not watch `src/`, so rerun `npm run dev` after editing the
+server code.
 
 ## Deploy
 
 ```bash
 npx wrangler login                            # one-time browser OAuth
-npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+npx wrangler pages project create 1099-int-check --production-branch main
+npx wrangler pages secret put SUPABASE_PUBLISHABLE_KEY --project-name 1099-int-check --env production
 npm run deploy
 ```
 
-Deploys to `1099-int-check.<your-subdomain>.workers.dev`. Change `name` in
-`wrangler.jsonc` to deploy elsewhere.
+Deploys to `1099-int-check.pages.dev`. Change `name` in `wrangler.jsonc` to
+deploy elsewhere.
+
+`npm run deploy` builds `dist/` first. Running `wrangler pages deploy` on its
+own publishes whatever `dist/` already held, which on a fresh clone is nothing.
+
+Deploying from a branch other than `main` produces a preview URL
+(`<branch>.1099-int-check.pages.dev`) and leaves production alone.
 
 ## Traffic sources
 
@@ -117,8 +129,8 @@ Append `?src=` to the link you post and the value rides along with each
 submission, so you can tell communities apart:
 
 ```
-https://your-worker.workers.dev/?src=churning
-https://your-worker.workers.dev/?src=doc
+https://1099-int-check.pages.dev/?src=churning
+https://1099-int-check.pages.dev/?src=doc
 ```
 
 Anything without a `src` parameter is recorded as `direct`.
@@ -127,10 +139,14 @@ Anything without a `src` parameter is recorded as `direct`.
 
 ```
 ├── public/
-│   └── index.html      the entire page: markup, styles, and script inline
+│   ├── index.html      the entire page: markup, styles, and script inline
+│   └── 404.html        exists for its status code; see "Known traps"
 ├── src/
-│   └── index.js        Worker: security headers + POST /api/signup
-├── wrangler.jsonc      Worker + static assets config
+│   └── index.js        server: security headers + POST /api/signup
+├── scripts/
+│   └── build.mjs       composes dist/ from public/ + src/index.js
+├── dist/               generated, gitignored, never edited by hand
+├── wrangler.jsonc      Pages project config
 └── package.json
 ```
 
@@ -145,7 +161,7 @@ you can open directly in a browser.
 | `POST /api/signup` | Validates and inserts into Supabase. JSON or form-encoded. |
 | `GET /api/status` | `{ok, configured}` — lets the page detect a broken backend on load. |
 | `GET /healthz` | `ok`, without touching the asset store. |
-| anything else | 404. |
+| anything else | 404, via `public/404.html`. |
 
 ### Abuse controls on `/api/signup`
 
@@ -159,8 +175,10 @@ you can open directly in a browser.
 
 #### Why the rate limit lives in Postgres
 
-The obvious place is Cloudflare's Workers rate-limit binding. It does not work
-for this. Its own documentation calls it
+The obvious place was Cloudflare's Workers rate-limit binding. It does not work
+for this, and on Pages it is not even available — Pages Functions cannot bind
+the rate limiter. Losing it costs nothing, because it never held. Its own
+documentation calls it
 ["permissive, eventually consistent, and intentionally designed to not be used
 as an accurate accounting system"](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/),
 with per-colo counters updated asynchronously, so *"rapid requests against the
@@ -179,29 +197,41 @@ same `ip_hash` in the last minute and raises `PT429`, which PostgREST surfaces
 as a real HTTP `429`. Postgres counts synchronously, so the limit actually
 holds. Measured on production after the change: **1 accepted, 14 rejected.**
 
-The Cloudflare binding is kept as a cheap first pass for sustained load, and now
-logs loudly if it ever stops returning a usable result.
+The code path for the Cloudflare binding is kept in `src/index.js` so the file
+still throttles at the edge if it is ever deployed as a Worker again. On Pages
+the binding is absent, so that branch logs on every signup that the edge layer
+is gone. The noise is deliberate: it should not be possible to forget which
+layer is actually enforcing.
 
-`ip_hash` is a salted SHA-256 of the client IP, computed in the Worker. The raw
+`ip_hash` is a salted SHA-256 of the client IP, computed server-side. The raw
 address is never stored. Note that IPv4 and IPv6 clients hash to different
 buckets, so a dual-stack client gets two allowances.
 
-### The Worker
+### The server, and two traps
 
-An assets-only Worker cannot set response headers or run server-side logic,
-which is why `src/index.js` exists. It adds a strict CSP (`default-src 'none'`,
+A static site cannot set response headers or run server-side logic, which is why
+`src/index.js` exists. It adds a strict CSP (`default-src 'none'`,
 `connect-src 'self'`), `nosniff`, `frame-ancestors 'none'`, HSTS, and a
 restrictive `Permissions-Policy`.
 
-**`run_worker_first` is required and not optional.** Without it, matching assets
-are served straight from the asset store and the Worker never runs, so the page
-silently returns with no security headers at all while the API route keeps
-them — an easy thing to ship without noticing. Verified by inspecting response
-headers on `GET /` both ways.
+`npm run build` copies it to `dist/_worker.js`. That exact filename at the root
+of the build output is what puts Pages in **advanced mode**: every request runs
+the script first, and static files are fetched deliberately through
+`env.ASSETS`.
 
-`not_found_handling` is `none`, not `single-page-application`. This is a one-page
-site; with the SPA setting every unknown path returned the landing page with a
-200, so crawlers would see unlimited duplicate URLs.
+**That ordering is load bearing.** It is what replaces the Workers-only
+`assets.run_worker_first` flag. Adding a `_routes.json` that excludes `/` would
+put the asset server back in front, and the page would silently return with no
+security headers at all while the API route kept them — an easy thing to ship
+without noticing. The deploy workflow greps for the CSP header on `/` for
+exactly this reason.
+
+**`public/404.html` exists only for its status code.** Pages answers an
+unmatched path by serving `index.html` with a `200` unless that file is present.
+This is a one-page site; without it every wrong URL becomes an indexable
+duplicate of the landing page. Verified during the migration: `GET
+/nope-does-not-exist` returned `200` before the file was added, `404` after.
+The deploy workflow checks it.
 
 Inline `<style>` and `<script>` require `'unsafe-inline'` on those two
 directives. That is a real weakening of the CSP, accepted here because the page

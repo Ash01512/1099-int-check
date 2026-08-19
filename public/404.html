@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Not here — 1099-INT Check</title>
+<meta name="color-scheme" content="light">
+
+<!-- The only reason this file exists is the status code.
+     Cloudflare Pages, unlike Workers' not_found_handling:"none", answers an
+     unmatched path by serving index.html with a 200 unless a 404.html is
+     present. That turned every wrong URL into a duplicate copy of the landing
+     page, which is what the Workers config went out of its way to prevent:
+     a crawler would index unlimited distinct URLs all showing the same page.
+     Deleting this file silently reintroduces that. Verified: without it,
+     GET /nope-does-not-exist returned 200. -->
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23FAFAF8'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='19' font-weight='700' fill='%23C77400' text-anchor='middle'%3E1099%3C/text%3E%3C/svg%3E">
+<meta name="robots" content="noindex">
+
+<style>
+  :root{
+    --paper:#FAFAF8; --ink:#111111; --mute:#6B6B66;
+    --rule:#D8D8D2; --signal:#C77400;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:"JetBrains Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    min-height:100vh;display:flex;align-items:center;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:0 40px}
+  .code{color:var(--signal);font-weight:700;letter-spacing:.04em}
+  h1{font-size:19px;font-weight:700;margin:10px 0 12px}
+  p{color:var(--mute);max-width:52ch}
+  hr{border:0;border-top:1px solid var(--rule);margin:20px 0}
+  a{color:var(--ink)}
+  @media (max-width:600px){ .wrap{padding:0 22px} }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="code">404</div>
+    <h1>There's nothing at this address.</h1>
+    <p>This site is one page. If you followed a link here, it was pointing at
+       something that never existed.</p>
+    <hr>
+    <p><a href="/">Go to the page</a></p>
+  </main>
+</body>
+</html>
