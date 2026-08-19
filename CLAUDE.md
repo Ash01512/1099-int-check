@@ -54,7 +54,31 @@ npx wrangler pages secret put RESEND_API_KEY           --project-name 1099-int-c
 # then repeat each with --env preview
 ```
 
-## Delivery — see GOING-LIVE.md
+## Delivery is LIVE (Brevo, since 2026-08-19)
+Confirmed by Brevo's own event log: `delivered` to an Outlook address that is
+not the Brevo account address, plus the founder BCC. 0 bounces, 0 spam reports.
+
+Two traps cost an hour and are not obvious from any status code:
+
+- **Brevo blocks unknown IPs by default, and that is fatal for a Worker.**
+  The API returns a plain `401`, indistinguishable from a bad key — the reason
+  appears only in the *response body*: "unrecognised IP address". Cloudflare
+  sends from hundreds of rotating edge IPs, so allowlisting cannot work.
+  **Blocking must be deactivated** at
+  <https://app.brevo.com/security/authorised_ips>. Brevo turns this on by
+  itself after a 30-day quiet period, so it can break a working deployment
+  later with no change on our side. If delivery starts 401ing, check this
+  before suspecting the key.
+- **Brevo shows an API key exactly once, at generation.** Afterwards the
+  dashboard displays it masked (`**********zkDFyG`). Copying what is on screen
+  yields the mask, not the key, and produces the same `401`. Lost keys cannot
+  be recovered — generate a new one.
+
+Because of the first trap, always read the response body when diagnosing a
+delivery `401`. `delivery_status` in the signup response gives the code; the
+Worker logs (`npm run tail`) carry the provider's own words.
+
+## Provider setup — see GOING-LIVE.md
 Two providers are supported, chosen by whichever key is set (or pinned with
 `WALKTHROUGH_PROVIDER`):
 - **Brevo** verifies a single sender ADDRESS by emailing it a link. No domain,
