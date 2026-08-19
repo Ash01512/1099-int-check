@@ -45,21 +45,30 @@
     // The provider is inferred from whichever key is set. Pin it explicitly
     // with WALKTHROUGH_PROVIDER ("brevo" or "resend") if both ever exist.
     //
-    // WALKTHROUGH_FROM is intentionally EMPTY. It has no safe default: a
-    // wrong address here means the provider rejects every send with a 400
-    // while /api/status still reports delivery:true, which is precisely the
-    // "looks configured, delivers nothing" failure this project keeps
-    // hitting. Set it to the address you actually verified.
-    "WALKTHROUGH_FROM": "",
-
     // Shown as the sender name. Without it, clients display the bare address,
     // which from a personal mailbox reads like mail from a stranger.
-    "WALKTHROUGH_FROM_NAME": "1099-INT Check",
+    "WALKTHROUGH_FROM_NAME": "1099-INT Check"
 
-    // Optional. A blind copy of every walkthrough, so your inbox is the
-    // delivery log and you see exactly what each reader sees. Also used as
-    // the reply-to, because the email asks people to reply.
-    "FOUNDER_BCC": ""
+    // WALKTHROUGH_FROM and FOUNDER_BCC are deliberately NOT here. They are
+    // set as secrets instead:
+    //   npx wrangler pages secret put WALKTHROUGH_FROM --project-name 1099-int-check --env production
+    //   npx wrangler pages secret put FOUNDER_BCC      --project-name 1099-int-check --env production
+    //
+    // Two reasons, neither about secrecy:
+    //
+    // 1. This repository is public. Both hold a personal mailbox address, and
+    //    a plaintext address in a public repo is harvested. Nothing else here
+    //    puts a real person's address in git and this should not start.
+    //
+    // 2. It removes a deploy cycle from the setup. Whoever configures
+    //    delivery sets the key and the sender in the same place, with no code
+    //    change and no pull request. A value in `vars` here would also become
+    //    the source of truth and silently outrank anything set elsewhere.
+    //
+    // There is no default. An address that was never verified with the
+    // provider means every send is rejected while /api/status still reports
+    // delivery:true — the "looks configured, delivers nothing" failure this
+    // project keeps finding. Absent is honest; wrong is not.
   }
 
   // NOT PRESENT, and deliberately so — these are Workers-only keys that

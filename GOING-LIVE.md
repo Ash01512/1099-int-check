@@ -26,34 +26,37 @@ domain, which is exactly why this route works on `pages.dev`.
 Free plan is roughly **300 emails/day**. Worth knowing before a link gets
 posted somewhere busy.
 
-### Step 2 — you: create an API key and set it
+### Step 2 — you: create an API key
 
 Brevo → **SMTP & API** → **API Keys** → **Generate a new API key**.
 
-**Do not paste the key into a chat or a file.** Set it directly, so it goes
-from your clipboard to Cloudflare and nowhere else:
+### Step 3 — you: set three values and redeploy
+
+**Do not paste any of these into a chat or a file.** Each command prompts, so
+the value goes from your clipboard to Cloudflare and nowhere else:
 
 ```bash
-npx wrangler pages secret put BREVO_API_KEY --project-name 1099-int-check --env production
-npx wrangler pages secret put BREVO_API_KEY --project-name 1099-int-check --env preview
+npx wrangler pages secret put BREVO_API_KEY    --project-name 1099-int-check --env production
+npx wrangler pages secret put WALKTHROUGH_FROM --project-name 1099-int-check --env production
+npx wrangler pages secret put FOUNDER_BCC      --project-name 1099-int-check --env production
+npm run deploy
 ```
 
-Both environments — a secret set on one is invisible to the other.
+- `BREVO_API_KEY` — from step 2.
+- `WALKTHROUGH_FROM` — **exactly** the address you verified in step 1. Not a
+  similar one; Brevo rejects anything unverified.
+- `FOUNDER_BCC` — your own address. You get a blind copy of every walkthrough,
+  so your inbox becomes the delivery log, and it is used as the reply-to
+  because the email asks people to reply.
 
-### Step 3 — set the sender address
+**The `npm run deploy` is not optional.** Cloudflare's own documentation is
+explicit that on Pages, secrets "need to be done before a deployment that uses
+those secrets". A secret set against the current deployment does nothing until
+a new one is created. Skip it and you will see `delivery:false`, assume the key
+is wrong, and go looking in the wrong place.
 
-`WALKTHROUGH_FROM` in `wrangler.jsonc` is deliberately empty. It has no safe
-default: a wrong address means Brevo rejects every send with a 400 while the
-status endpoint still reports `delivery:true`. Set it to **the exact address
-you verified in step 1**, and set `FOUNDER_BCC` to your own address so your
-inbox becomes the delivery log.
-
-```jsonc
-"WALKTHROUGH_FROM": "you@example.com",
-"FOUNDER_BCC": "you@example.com"
-```
-
-Commit and push; CI deploys on merge to `main`.
+Repeat the three `secret put` commands with `--env preview` if you want branch
+deploys to send too. Secrets do not carry between environments.
 
 ### Step 4 — prove it
 
@@ -89,6 +92,12 @@ folder, so the promise stays honest either way.
 
 The only way to make the mail properly authenticated. Costs ~$10–12/yr.
 
+Resend's own knowledge base states the restriction plainly: on the shared
+`resend.dev` domain *"you can only send testing emails to your own email
+address"*, and any other recipient *"triggers a 403 error"*. That is the API
+refusing, not a spam filter — accepting spam risk does not get around it.
+Only a verified domain permits sending to external addresses.
+
 Resend (or Brevo) verifies a domain by having you publish `SPF (TXT)`,
 `DKIM (TXT)` and `MX` records in that domain's DNS zone, plus `DMARC` after.
 You can only publish records in a zone you control, and `pages.dev` is a zone
@@ -109,8 +118,9 @@ hostname, and no configuration works around it.
 3. **Me:** add the SPF/DKIM/MX records to the Cloudflare zone, exactly as
    generated.
 4. **You:** click Verify.
-5. **Me:** point `WALKTHROUGH_FROM` at an address on that domain and redeploy.
-   `unaligned_sender` becomes `false` and the mail starts reaching inboxes.
+5. **You:** re-run `wrangler pages secret put WALKTHROUGH_FROM` with an address
+   on that domain, then `npm run deploy`. `unaligned_sender` becomes `false`
+   and the mail starts reaching inboxes.
 6. **Me:** move the site onto the domain too — Pages custom domain, then
    update `rel="canonical"` and `og:url` in `public/index.html`, `URL` in
    `.github/workflows/deploy.yml`, `TARGET` in `redirect/index.js`, and the

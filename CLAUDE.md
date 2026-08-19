@@ -93,9 +93,18 @@ means every send is rejected while `delivery` still reads true.
   site moves to a custom domain, so update it in the same commit as the move.
   `og:url` next to it needs the same edit. The deploy workflow asserts the
   canonical matches the URL it just verified.
+- **A Pages secret does nothing until the next deployment.** Cloudflare's docs:
+  secrets "need to be done before a deployment that uses those secrets". Set a
+  key against the live deployment and `/api/status` keeps reporting the old
+  state, which reads as a bad key rather than a missing redeploy. Always
+  `npm run deploy` after `wrangler pages secret put`.
 - Secrets do not carry over between the `production` and `preview` Pages
   environments. Setting one and testing the other is a confusing way to see
   `configured:false`.
+- `WALKTHROUGH_FROM` and `FOUNDER_BCC` are secrets, not `vars`, because this
+  repo is public and both hold a personal mailbox address. Do not "tidy" them
+  into `wrangler.jsonc` — that publishes an address to be harvested, and a
+  value in `vars` also becomes the source of truth and outranks the secret.
 - `wrangler pages dev` does not watch `src/`. It serves `dist/`, so rerun
   `npm run build` (or `npm run dev`) after editing the worker.
 - **A fresh deployment does not reach every edge node at once.** The deploy
