@@ -1,12 +1,13 @@
 {
   "name": "1099-int-check",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Landing page for a free guide that helps extension filers check their 1099-INT interest forms against their IRS Wage & Income Transcript before October 15.",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail"
+    "build": "node scripts/build.mjs",
+    "dev": "npm run build && wrangler pages dev",
+    "deploy": "npm run build && wrangler pages deploy",
+    "tail": "wrangler pages deployment tail --project-name 1099-int-check"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

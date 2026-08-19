@@ -1,9 +1,14 @@
 /**
  * 1099-INT Check — static landing page plus a signup endpoint,
- * served from a Cloudflare Worker.
+ * served from a Cloudflare Pages Function.
  *
- * The page lives in public/. This Worker attaches security headers and
- * handles POST /api/signup, writing to Supabase.
+ * The page lives in public/. `npm run build` copies this file to
+ * dist/_worker.js, which puts Pages in "advanced mode": every request enters
+ * here first, and static files are fetched deliberately via env.ASSETS. That
+ * ordering is what lets the security headers below reach the page at all.
+ *
+ * This file attaches those headers and handles POST /api/signup, writing to
+ * Supabase.
  *
  * The Supabase key never reaches the browser. The page posts same-origin
  * to /api/signup and this Worker forwards the insert, so validation, the
@@ -260,9 +265,19 @@ async function handleSignup(request, env) {
     return json({ error: "forbidden_origin" }, 403);
   }
 
-  // Rate limit per client IP. Cloudflare's binding is optional so that local
-  // dev and a misconfigured deploy still function; when it is absent we log
-  // rather than silently pretending the endpoint is protected.
+  // Rate limit per client IP.
+  //
+  // On Pages this binding is ALWAYS absent: Pages Functions cannot bind the
+  // Cloudflare rate limiter, so the `else` branch below is the live path in
+  // production and logs on every signup. That noise is deliberate. The limit
+  // that actually holds is the Postgres trigger, which returns a real 429
+  // further down — Cloudflare documents the edge binding as permissive and
+  // eventually consistent, and it let 14 of 14 rapid writes through a 5/60
+  // limit when this ran on Workers. Losing it costs a cheap first pass, not
+  // the protection.
+  //
+  // The branch is kept rather than deleted so this file still throttles at
+  // the edge if it is ever deployed as a Worker again.
   if (env.SIGNUP_LIMITER) {
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
     try {
@@ -356,8 +371,8 @@ async function handleSignup(request, env) {
   }
 
   // The database trigger raises PT429, which PostgREST surfaces as a real 429.
-  // This is the limit that actually holds; the Cloudflare binding above is a
-  // cheap first pass that its own docs describe as permissive.
+  // On Pages this is the ONLY rate limit in front of the table, since the edge
+  // binding above cannot exist here. It was always the one that actually held.
   if (res.status === 429) {
     return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
   }

@@ -1,0 +1,25 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+
+  // Deliberately the SAME name as the Worker that used to serve this site.
+  // Deploying this REPLACES that script, which is the point: the old code
+  // stops running and the hostname starts redirecting. Renaming it would
+  // leave the old site live and create a third copy instead of retiring one.
+  //
+  // The Pages project is also called 1099-int-check. That is not a collision —
+  // Workers and Pages are separate namespaces on separate hostnames.
+  "name": "1099-int-check",
+  "main": "index.js",
+  "compatibility_date": "2026-08-19",
+
+  // Explicit rather than inherited. This Worker exists ONLY to answer on
+  // 1099-int-check.ashabbas-2023.workers.dev; if the subdomain route were
+  // dropped the redirect would answer nothing and the old links would break,
+  // which is the exact outcome the redirect exists to avoid.
+  "workers_dev": true
+
+  // No assets, no vars, no secrets, no rate limiter, on purpose. This is a
+  // redirect and nothing else. In particular it must never regain the
+  // Supabase binding: two deployments writing to public.signups would split
+  // the mailing list across them with no error anywhere.
+}
