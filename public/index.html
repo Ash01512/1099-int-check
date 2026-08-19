@@ -116,6 +116,16 @@
   button[disabled]{opacity:.55;cursor:default}
   .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 
+  /* Keyboard focus. The button is near-black on near-white, so the browser's
+     default ring sits on top of --ink and is close to invisible. An explicit
+     offset ring in the signal colour is legible on both the page ground and
+     the filled button. :focus-visible rather than :focus so a mouse click
+     does not leave a ring behind. */
+  a:focus-visible,
+  input:focus-visible,
+  button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  input:focus{border-color:var(--ink)}
+
   .msg{margin-top:14px;font-size:13.5px;line-height:1.6;max-width:60ch;display:none}
   .msg.show{display:block}
   .msg.ok{color:var(--ok);font-weight:600}
@@ -231,8 +241,16 @@
     </div>
 
     <form id="signup" novalidate>
-      <label class="hp" for="company">Company (leave blank)</label>
-      <input class="hp" type="text" id="company" name="company" tabindex="-1" autocomplete="off">
+      <!-- Honeypot. aria-hidden is not decoration here: .hp hides the field with
+           position:absolute;left:-9999px, which is the off-screen technique that
+           deliberately KEEPS content in the accessibility tree. Without this
+           attribute a screen reader announces "Company (leave blank)" as a real
+           field, and a blind visitor who fills it has their signup silently
+           discarded behind a fake success. Bots parse the HTML, not the
+           accessibility tree, so hiding it here costs nothing. -->
+      <label class="hp" for="company" aria-hidden="true">Company (leave blank)</label>
+      <input class="hp" type="text" id="company" name="company" tabindex="-1"
+             autocomplete="off" aria-hidden="true">
       <input type="email" id="email" name="email" placeholder="you@example.com" aria-label="Email address" required autocomplete="email">
       <button type="submit" id="submit">Send it</button>
     </form>

@@ -160,3 +160,12 @@ jobs:
 
           echo "production FAILED verification after 6 attempts"
           exit 1
+
+      # The checks above prove the page returns 200 with a CSP header. They
+      # cannot prove the browser will run it. The policy names each inline
+      # block by SHA-256, so a one-byte drift — or Cloudflare rewriting line
+      # endings on ingest, which it does — makes the browser refuse to execute
+      # the page's only script. The form stops working and every status-code
+      # check above still passes. This hashes the blocks as actually served.
+      - name: Verify the browser can run the deployed page
+        run: node scripts/verify-csp.mjs "https://1099-int-check.pages.dev"

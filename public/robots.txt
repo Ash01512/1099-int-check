@@ -1,3 +1,10 @@
+# Everything is crawlable except the API, which has nothing to index and
+# answers 405 to GET anyway.
+#
+# There was previously an "Allow: /$" line here. It did nothing: Allow only
+# has meaning as an exception to a Disallow, there was no "Disallow: /" for it
+# to carve out of, and the "$" anchor is a search-engine extension rather than
+# part of the original robots specification. A directive that looks like a rule
+# but enforces nothing is worse than no directive.
 User-agent: *
-Allow: /$
 Disallow: /api/

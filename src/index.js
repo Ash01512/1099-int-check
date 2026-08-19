@@ -15,18 +15,48 @@
  * honeypot, and rate limiting cannot be bypassed by posting directly.
  */
 
-// Inline <style> and <script> in the page require 'unsafe-inline' on those
-// two directives. Everything else is shut: no external scripts, no framing,
-// and connect-src is 'self' only, since the browser talks to this Worker
-// rather than to a third-party form provider.
+/**
+ * Content Security Policy.
+ *
+ * Everything is shut: no external scripts, no framing, and connect-src is
+ * 'self' only, since the browser talks to this Worker rather than to a
+ * third-party form provider.
+ *
+ * The page keeps its <style> and <script> inline — that single-file property
+ * is deliberate, and moving them out to close the CSP hole would trade one
+ * virtue for another. Instead the two tokens below are replaced at build time
+ * by scripts/build.mjs with the SHA-256 hash of each inline block, which lets
+ * the policy name exactly those blocks and drop 'unsafe-inline' entirely.
+ *
+ * A hash must match the block byte for byte, so this cannot be maintained by
+ * hand: any edit to the page's script or styles would silently break the page
+ * in production and nowhere else. The build derives them from the file that
+ * actually ships, normalises line endings so the bytes match what Cloudflare
+ * serves, and refuses to build if either token is missing.
+ */
+const INLINE_SCRIPT_HASHES = "__INLINE_SCRIPT_HASHES__";
+const INLINE_STYLE_HASHES = "__INLINE_STYLE_HASHES__";
+
+/**
+ * Unbuilt source — the test suite, and anything importing src/ directly — has
+ * the raw tokens rather than hashes, and would otherwise emit a CSP that
+ * blocks the page it is meant to protect. It falls back to 'unsafe-inline'
+ * there. That fallback cannot reach production unnoticed: the build fails if
+ * it cannot substitute, and a test asserts the built artifact contains no
+ * 'unsafe-inline' at all.
+ */
+function inlineSources(hashes) {
+  return hashes.startsWith("__") ? "'unsafe-inline'" : hashes;
+}
+
 const CSP = [
   "default-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
   "img-src 'self' data:",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
+  `style-src 'self' ${inlineSources(INLINE_STYLE_HASHES)}`,
+  `script-src 'self' ${inlineSources(INLINE_SCRIPT_HASHES)}`,
   "connect-src 'self'",
   "font-src 'self'",
 ].join("; ");
